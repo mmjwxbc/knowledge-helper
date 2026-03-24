@@ -13,8 +13,9 @@ import docx2txt
 from pypdf import PdfReader
 import aiohttp
 from bs4 import BeautifulSoup
-from biliSub.bilibiliSub import BiliSubDownloader
+from biliSub.enhanced_bilisub import BiliSubDownloader
 from dotenv import load_dotenv
+from .utils import read_srt
 load_dotenv()
 
 # Models for PydanticOutputParser
@@ -25,11 +26,12 @@ class QAItem(BaseModel):
 
 parser = PydanticOutputParser(pydantic_object=QAItem)
 bilibili_sub_downloader = BiliSubDownloader({
-        "output_formats": ["srts"],
-        "use_asr": False,
-        "asr_model": "deepseek",
+        "output_formats": ["srt"],
+        "use_asr": True,
+        "asr_model": "small",
         "concurrency": 2,
-        "temp_dir": "/home/jhli/knowledge-helper/backend/bilisub_output"
+        "temp_dir": "/tmp",
+        "output_dir": "/home/jhli/knowledge-helper/backend/bilisub_output"
     })
 # Global memory cache (replace with Redis in production)
 # Structure: {id: {"text": str, "question": str, "answer": str, "tags": List[str], "category": str}}
@@ -70,8 +72,8 @@ async def extract_text_from_url(url: str) -> tuple[bool, str]:
     print(f"- 总视频数: {bilibili_sub_downloader.stats['total_videos']}")
     print(f"- 成功数: {bilibili_sub_downloader.stats['success']}")
     print(f"- 失败数: {bilibili_sub_downloader.stats['failed']}")
-    text = open(os.path.join("/home/jhli/knowledge-helper/backend/bilisub_output", f"{bvid}.srts"), "r", encoding="utf-8").read()
-    return True, text
+    text = open(os.path.join("/home/jhli/knowledge-helper/backend/bilisub_output", bvid, f"{bvid}.srt"), "r", encoding="utf-8").read()
+    return True, read_srt(text)
 async def _refine_content_with_llm(text: str, feedback: str = None) -> Optional[QAItem]:
     """
     Use LLM to refine content into structured Q&A.
@@ -139,7 +141,9 @@ async def process_content(file: Optional[UploadFile] = None, url: Optional[str] 
     if file:
         text = await extract_text_from_file(file)
     elif url:
-        text = await extract_text_from_url(url)
+        success, text = await extract_text_from_url(url)
+        if not success:
+            return {"error": text}
 
     if not text:
         return {"error": "No text extracted from input"}
