@@ -3,3 +3,4 @@
 *.db
 chroma_db
 backend/biliSub/
+node_modules
