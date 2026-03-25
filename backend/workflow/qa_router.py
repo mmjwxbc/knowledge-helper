@@ -90,6 +90,7 @@ class IntentClassifier:
             - 优先检测问答对格式（Q:/A:、问题/答案、Q1/A1等标记）
             - 检测疑问词（什么、如何、为什么、是否、怎么）判断是否为问题
             - 无问句标记但有明确信息量的归为事实描述
+            - 如果内容是问题的列表（如 1. 2. 3... 或 多个问句），即使没有答案，也应归类为 multi_qa，以便进行批量提取。
 
             {format_instructions}
 
@@ -128,7 +129,7 @@ class ContentProcessor:
             1. 答案应该直接回答问题，避免冗余
             2. 使用清晰的结构（如需要可分点说明）
             3. 包含关键概念的解释
-            4. 答案长度控制在200-500字
+            4. 答案长度控制在100字以内
 
             {format_instructions}
 
@@ -150,7 +151,7 @@ class ContentProcessor:
             原始内容: {content}
 
             任务：
-            1. 根据内容生成2-3个最能考察核心知识点的问题（使用5W1H方法）
+            1. 根据内容生成1个最能考察核心知识点的问题（使用5W1H方法）
             2. 为每个问题提供基于原文的准确答案
             3. 确保问题具有启发性，不是简单的事实复述
 
@@ -242,7 +243,8 @@ class QARouter:
         }
         
         selected_processor = processor_map.get(category_result.category)
-        
+        if len(text.split('\n')) > 5 and category_result.category == ContentCategory.ISOLATED_QUESTION:
+            selected_processor = self.processor.create_multi_qa_processor() 
         # Step 3: 执行处理
         try:
             result = await selected_processor.ainvoke({

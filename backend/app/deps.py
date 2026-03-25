@@ -27,7 +27,7 @@ async def get_llm_instance():
         with open("/home/jhli/knowledge-helper/config/llm.yaml", 'r') as f:
             config = yaml.safe_load(f)
             config = config["DeepSeek"]
-            llm = ChatDeepSeek(base_url=config["BASE_URL"], api_key=config["API_KEY"], model_name=config["MODEL_ID"], temperature=0.3, max_tokens=4096)
+            llm = ChatDeepSeek(base_url=config["BASE_URL"], api_key=config["API_KEY"], model_name=config["MODEL_ID"], temperature=0.3, max_tokens=8192)
     return llm
 
 async def get_qa_router_instance():

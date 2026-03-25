@@ -13,6 +13,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 import docx2txt
 from pypdf import PdfReader
 import aiohttp
+import re
 from bs4 import BeautifulSoup
 from biliSub.enhanced_bilisub import BiliSubDownloader
 from dotenv import load_dotenv
@@ -144,49 +145,86 @@ async def _refine_content_with_llm(text: str, feedback: str = None) -> Optional[
         print(f"Error in LLM refinement: {str(e)}")
         return None
 
-async def process_content(file: Optional[UploadFile] = None, url: Optional[str] = None, category: str = "未分类"):
+async def process_content(file: Optional[UploadFile] = None, url: Optional[str] = None, category: str = "未分类", progress_callback=None):
     """
     Process content from file or URL and return structured data for review.
     """
     text = ""
-    if file:
-        text = await extract_text_from_file(file)
-    elif url:
-        success, text = await extract_text_from_url(url)
-        if not success:
-            return {"error": text}
+    
+    try:
+        # Send initial progress
+        if progress_callback:
+            progress_callback(10, "开始处理输入")
+        
+        if file:
+            if progress_callback:
+                progress_callback(20, "从文件中提取文本")
+            text = await extract_text_from_file(file)
+        elif url:
+            if progress_callback:
+                progress_callback(20, "从URL中提取文本")
+            success, text = await extract_text_from_url(url)
+            if not success:
+                if progress_callback:
+                    progress_callback(100, "处理失败")
+                return {"error": text}
 
-    if not text:
-        return {"error": "No text extracted from input"}
-    qa_router = await get_qa_router_instance()
-    results = await qa_router.route_and_process(text)
-    # refined_data = await _refine_content_with_llm(text)
+        if not text:
+            if progress_callback:
+                progress_callback(100, "处理失败")
+            return {"error": "No text extracted from input"}
+        clean_text = re.sub(r'#.*?#', '', text)
+        clean_text = re.sub(r'\s+', ' ', clean_text).strip()
+        if progress_callback:
+            progress_callback(40, "获取QA路由器实例")
+        qa_router = await get_qa_router_instance()
+        
+        if progress_callback:
+            progress_callback(60, "分析文本内容并生成Q&A")
+        
+        # 添加错误处理，确保即使qa_router处理失败也能返回错误信息
+        try:
+            results = await qa_router.route_and_process(clean_text)
+        except Exception as e:
+            if progress_callback:
+                progress_callback(100, f"处理失败: {str(e)}")
+            return {"error": f"分析文本内容失败: {str(e)}"}
+        # refined_data = await _refine_content_with_llm(text)
 
-    # if not refined_data:
-        # return {"error": "Failed to refine content"}
+        # if not refined_data:
+            # return {"error": "Failed to refine content"}
 
-    # Generate unique ID for this processing session
-    processing_id = str(uuid.uuid4())
+        # Generate unique ID for this processing session
+        processing_id = str(uuid.uuid4())
 
-    # Store in cache for potential corrections
-    STAGING_CACHE[processing_id] = {
-        "text": text,
-        "items": results.items,
-        "category": category
-    }
+        # Store in cache for potential corrections
+        if progress_callback:
+            progress_callback(80, "存储处理结果到缓存")
+        STAGING_CACHE[processing_id] = {
+            "text": clean_text,
+            "items": results.items,
+            "category": category
+        }
 
-    # Generate preview (first 200 chars of answer)
-    preview = f"问题: {results.items[0].question}\n\n答案: {results.items[0].answer[:200]}..."
+        # Generate preview (first 200 chars of answer)
+        preview = f"问题: {results.items[0].question}\n\n答案: {results.items[0].answer[:200]}..."
 
-    return {
-        "id": processing_id,
-        "questions": [item.question for item in results.items],
-        "answers": [item.answer for item in results.items],
-        "tags": [item.tags for item in results.items],
-        "category": category,
-        "preview": preview,
-        "status": "reviewing"
-    }
+        if progress_callback:
+            progress_callback(100, "处理完成")
+
+        return {
+            "id": processing_id,
+            "questions": [item.question for item in results.items],
+            "answers": [item.answer for item in results.items],
+            "tags": [item.tags for item in results.items],
+            "category": category,
+            "preview": preview,
+            "status": "reviewing"
+        }
+    except Exception as e:
+        if progress_callback:
+            progress_callback(100, f"处理失败: {str(e)}")
+        return {"error": f"处理过程中发生错误: {str(e)}"}
 
 async def refine_content_with_feedback(processing_id: str, feedback: str):
     """

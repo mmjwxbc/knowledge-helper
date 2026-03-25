@@ -87,13 +87,69 @@ async def add_category_endpoint(category_data: dict):
 @app.post("/api/process")
 async def process_url(input: URLInput):
     """
-    Process URL and return structured data for review.
+    Process URL and return structured data for review with progress updates.
     """
     if not input.url:
         raise HTTPException(status_code=400, detail="URL is required")
 
-    result = await process_content(url=input.url, category=input.category or "未分类")
-    return result
+    from fastapi.responses import StreamingResponse
+    import json
+    import asyncio
+
+    # Create a queue to pass progress updates
+    progress_queue = asyncio.Queue()
+
+    async def process_with_progress():
+        """Process content and send progress updates to the queue"""
+        def progress_callback(progress, message):
+            # Send progress update to the queue
+            asyncio.create_task(progress_queue.put((progress, message)))
+
+        try:
+            # Process content with progress callback
+            result = await process_content(
+                url=input.url, 
+                category=input.category or "未分类",
+                progress_callback=progress_callback
+            )
+            # Send final result to the queue
+            await progress_queue.put((100, "处理完成", result))
+        except Exception as e:
+            # Send error message to the queue
+            await progress_queue.put((100, f"处理失败: {str(e)}", {"error": str(e)}))
+
+    # Start processing in the background
+    asyncio.create_task(process_with_progress())
+
+    async def event_generator():
+        """Generate SSE events from the progress queue"""
+        # Send initial progress
+        yield f"data: {json.dumps({'status': 'processing', 'progress': 0, 'message': '开始处理URL'})}\n\n"
+
+        # Listen for progress updates
+        while True:
+            try:
+                # Get progress update from queue with timeout
+                item = await asyncio.wait_for(progress_queue.get(), timeout=300.0)
+                
+                if len(item) == 3:
+                    # Final result
+                    progress, message, result = item
+                    yield f"data: {json.dumps({'status': 'completed', 'result': result})}\n\n"
+                    break
+                else:
+                    # Progress update
+                    progress, message = item
+                    yield f"data: {json.dumps({'status': 'processing', 'progress': progress, 'message': message})}\n\n"
+            except asyncio.TimeoutError:
+                # Send timeout message
+                yield f"data: {json.dumps({'status': 'error', 'message': '处理超时'})}\n\n"
+                break
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream"
+    )
 
 @app.post("/api/process/correct")
 async def correct_process(input: CorrectInput):
