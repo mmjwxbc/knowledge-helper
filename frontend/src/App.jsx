@@ -111,7 +111,7 @@ const DataManagerPage = () => {
       const timeoutPromise = new Promise((_, reject) => {
         timeoutId = setTimeout(() => {
           reject(new Error('处理超时'));
-        }, 120000); // 2分钟超时
+        }, 300000); // 2分钟超时
       });
 
       // 同时等待读取完成或超时
@@ -129,6 +129,7 @@ const DataManagerPage = () => {
               if (dataStr) {
                 try {
                   const data = JSON.parse(dataStr);
+                  console.log('收到SSE数据:', data);
                   if (data.status === 'processing') {
                     setProgress(data.progress);
                     setProgressMessage(data.message);

@@ -181,10 +181,10 @@ async def process_content(file: Optional[UploadFile] = None, url: Optional[str] 
         
         if progress_callback:
             progress_callback(60, "分析文本内容并生成Q&A")
-        
+
         # 添加错误处理，确保即使qa_router处理失败也能返回错误信息
         try:
-            results = await qa_router.route_and_process(clean_text)
+            results = await qa_router.route_and_process(clean_text, None, progress_callback)
         except Exception as e:
             if progress_callback:
                 progress_callback(100, f"处理失败: {str(e)}")

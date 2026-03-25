@@ -225,14 +225,20 @@ class QARouter:
         self.classifier = IntentClassifier(llm)
         self.processor = ContentProcessor(llm)
         
-    async def route_and_process(self, text: str, feedback: str = None) -> RefinedOutput:
+    async def route_and_process(self, text: str, feedback: str = None, progress_callback=None) -> RefinedOutput:
         """完整的路由处理流程"""
-        
+
+        if progress_callback:
+            progress_callback(45, "正在分析内容类型...")
+
         # Step 1: 意图分类
         classifier_chain = self.classifier.create_classifier_chain()
         category_result = await classifier_chain.ainvoke({"content": text[:2000]})
-        
+
         print(f"[路由决策] 分类: {category_result.category}, 理由: {category_result.reasoning}")
+
+        if progress_callback:
+            progress_callback(50, f"已识别为: {category_result.category.value}")
         
         # Step 2: 根据分类路由到对应处理器
         processor_map = {
@@ -244,9 +250,11 @@ class QARouter:
         
         selected_processor = processor_map.get(category_result.category)
         if len(text.split('\n')) > 5 and category_result.category == ContentCategory.ISOLATED_QUESTION:
-            selected_processor = self.processor.create_multi_qa_processor() 
+            selected_processor = self.processor.create_multi_qa_processor()
         # Step 3: 执行处理
         try:
+            if progress_callback:
+                progress_callback(55, "正在生成问题和答案...")
             result = await selected_processor.ainvoke({
                 "content": text[:4000],  # 保留更多上下文
                 "feedback": feedback or "无特殊反馈"
@@ -268,9 +276,9 @@ class QARouter:
         except Exception as e:
             print(f"处理错误: {e}")
             # Fallback: 使用通用处理器
-            return await self._fallback_process(text, feedback, category_result)
+            return await self._fallback_process(text, feedback, category_result, progress_callback)
     
-    async def _fallback_process(self, text: str, feedback: str, category_result: CategoryResult) -> RefinedOutput:
+    async def _fallback_process(self, text: str, feedback: str, category_result: CategoryResult, progress_callback=None) -> RefinedOutput:
         """降级处理"""
         generic_prompt = ChatPromptTemplate.from_template("""从以下内容中提取或生成问答对：
                                                             
@@ -285,7 +293,10 @@ class QARouter:
         chain = generic_prompt.partial(
             format_instructions=parser.get_format_instructions()
         ) | self.llm | parser
-        
+
+        if progress_callback:
+            progress_callback(65, "正在使用通用处理器提取问答...")
+
         return await chain.ainvoke({
             "content": text[:3000],
             "feedback": feedback or ""
