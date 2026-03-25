@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Layout, Upload, Input, Select, Button, Space, Card, Table, message, Modal, Form } from 'antd';
 import { UploadOutlined, PlusOutlined, SendOutlined, CheckCircleOutlined, FolderOpenOutlined } from '@ant-design/icons';
 
@@ -10,18 +10,34 @@ const DataManagerPage = () => {
   const [currentResult, setCurrentResult] = useState(null);
   const [feedback, setFeedback] = useState('');
   const [finalItems, setFinalItems] = useState([]);
-  const [status, setStatus] = useState('idle');
+  const [status, setStatus] = useState('idle'); // idle, processing, reviewing, categories, knowledgeBase
   const [url, setUrl] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('');
   const [addCategoryModal, setAddCategoryModal] = useState(false);
   const [selectedItems, setSelectedItems] = useState([]);
   const [form] = Form.useForm();
+  const [expandedCards, setExpandedCards] = useState(new Set());
 
   // 获取数据库类别
   useEffect(() => {
     fetchCategories();
-    fetchVaultData();
   }, []);
+
+  // 获取知识库数据（根据类别）
+  const fetchVaultDataByCategory = async (category = null) => {
+    try {
+      const url = category 
+        ? `${API_BASE}/vault?category=${encodeURIComponent(category)}` 
+        : `${API_BASE}/vault`;
+      const response = await fetch(url);
+      const data = await response.json();
+      if (data.items) {
+        setFinalItems(data.items);
+      }
+    } catch (error) {
+      console.error('Failed to fetch vault data:', error);
+    }
+  };
 
   const fetchCategories = async () => {
     try {
@@ -36,15 +52,7 @@ const DataManagerPage = () => {
   };
 
   const fetchVaultData = async () => {
-    try {
-      const response = await fetch(`${API_BASE}/vault`);
-      const data = await response.json();
-      if (data.items) {
-        setFinalItems(data.items);
-      }
-    } catch (error) {
-      console.error('Failed to fetch vault data:', error);
-    }
+    await fetchVaultDataByCategory();
   };
 
   // 开始处理URL
@@ -135,7 +143,7 @@ const DataManagerPage = () => {
       if (successCount > 0) {
         message.success(`成功入库 ${successCount} 个项目`);
         await fetchVaultData();
-        setStatus('finished');
+        setStatus('idle');
         setCurrentResult(null);
         setSelectedItems([]);
       } else {
@@ -229,7 +237,7 @@ const DataManagerPage = () => {
             block
             size="large"
             icon={<FolderOpenOutlined />}
-            onClick={() => setStatus('finished')}
+            onClick={() => setStatus('categories')}
           >
             查看知识库
           </Button>
@@ -302,25 +310,92 @@ const DataManagerPage = () => {
           </Card>
         )}
 
-        {status === 'finished' && (
-          <Card title="🎉 知识库内容" extra={<Button size="small" onClick={() => fetchVaultData()}>刷新</Button>}>
-            <Table
-              dataSource={finalItems}
-              columns={[
-                { title: 'ID', dataIndex: 'id', key: 'id', width: 60 },
-                { title: '问题', dataIndex: 'question', key: 'question', ellipsis: true },
-                { title: '类别', dataIndex: 'category', key: 'category', width: 120 },
-                {
-                  title: '入库时间',
-                  dataIndex: 'created_at',
-                  key: 'created_at',
-                  width: 180,
-                  render: (text) => new Date(text).toLocaleString('zh-CN'),
-                },
-              ]}
-              pagination={{ pageSize: 10 }}
-              rowKey="id"
-            />
+        {status === 'categories' && (
+          <Card title="知识库分类" extra={<Button size="small" onClick={fetchCategories}>刷新</Button>}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '16px' }}>
+              {categories.map((category) => (
+                <Card 
+                  key={category} 
+                  hoverable
+                  onClick={() => {
+                    setSelectedCategory(category);
+                    fetchVaultDataByCategory(category);
+                    setStatus('knowledgeBase');
+                  }}
+                >
+                  <Card.Meta 
+                    title={category} 
+                    description="点击查看该分类下的知识"
+                  />
+                </Card>
+              ))}
+            </div>
+            <Button 
+              type="primary" 
+              style={{ marginTop: '16px' }} 
+              onClick={() => {
+                setSelectedCategory('');
+                fetchVaultDataByCategory();
+                setStatus('knowledgeBase');
+              }}
+            >
+              查看所有知识
+            </Button>
+          </Card>
+        )}
+
+        {status === 'knowledgeBase' && (
+          <Card 
+            title={`知识库内容 ${selectedCategory ? ` - ${selectedCategory}` : ''}`} 
+            extra={
+              <Space>
+                <Button size="small" onClick={() => fetchVaultDataByCategory(selectedCategory)}>刷新</Button>
+                <Button size="small" onClick={() => setStatus('categories')}>返回分类</Button>
+              </Space>
+            }
+          >
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(400px, 1fr))', gap: '16px' }}>
+              {finalItems.map((item) => (
+                <Card 
+                  key={item.id} 
+                  hoverable
+                  style={{ borderLeft: '4px solid #1890ff' }}
+                >
+                  <div style={{ cursor: 'pointer' }} onClick={() => {
+                    const newExpanded = new Set(expandedCards);
+                    if (newExpanded.has(item.id)) {
+                      newExpanded.delete(item.id);
+                    } else {
+                      newExpanded.add(item.id);
+                    }
+                    setExpandedCards(newExpanded);
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <h4 style={{ margin: '0 0 8px 0' }}>{item.question}</h4>
+                      <span style={{ fontSize: '12px', color: '#888' }}>
+                        {new Date(item.created_at).toLocaleDateString('zh-CN')}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: '12px', color: '#888', marginBottom: '8px' }}>
+                      类别: {item.category}
+                    </div>
+                    {expandedCards.has(item.id) && (
+                      <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #f0f0f0' }}>
+                        <strong>答案：</strong>
+                        <pre style={{ background: '#f5f5f5', padding: '10px', marginTop: '8px' }}>
+                          {item.answer}
+                        </pre>
+                      </div>
+                    )}
+                  </div>
+                </Card>
+              ))}
+            </div>
+            {finalItems.length === 0 && (
+              <div style={{ textAlign: 'center', padding: '40px' }}>
+                <p>该分类下暂无知识内容</p>
+              </div>
+            )}
           </Card>
         )}
       </Content>

@@ -117,25 +117,23 @@ async def commit_endpoint(item: CommitInput):
     if staging_data:
         # Use the staging data or the provided data
         success = await commit_item_with_category(
-            item.question, item.answer, item.tags, item.category
+            staging_data["items"], staging_data["category"]
         )
         if success:
             # Clear staging data after successful commit
             clear_staging_data(item.id)
     else:
         # No staging data found, commit directly
-        success = await commit_item_with_category(
-            item.question, item.answer, item.tags, item.category
-        )
+        success = False
 
     return {"status": "success" if success else "failed"}
 
 @app.get("/api/vault")
-async def get_vault():
+async def get_vault(category: Optional[str] = None):
     """
-    Get all approved items from the knowledge vault.
+    Get approved items from the knowledge vault, optionally filtered by category.
     """
-    data = await get_vault_data()
+    data = await get_vault_data(category)
     return {"items": data}
 
 # Legacy Endpoints (kept for backward compatibility)
@@ -158,7 +156,8 @@ async def commit_input(item: CommitInput):
     """
     Commit structured Q&A to dual storage (SQL + Vector).
     """
-    success = await commit_item_with_category(item.question, item.answer, item.tags, item.category)
+    staging_data = get_staging_data(item.id)
+    success = await commit_item_with_category(staging_data["items"], staging_data["category"])
     return {"status": "success" if success else "failed"}
 
 @app.get("/vault")

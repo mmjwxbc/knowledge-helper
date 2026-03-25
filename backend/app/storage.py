@@ -1,13 +1,12 @@
 import json
 from typing import List
 from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, func
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, declarative_base
 import chromadb
 from langchain_openai import OpenAIEmbeddings
-
+from langchain_community.embeddings import HuggingFaceEmbeddings
 # SQL Database setup (SQLite)
-DATABASE_URL = "sqlite:///./knowledge_vault.db"
+DATABASE_URL = "sqlite://///home/jhli/knowledge-helper/vault/sqlite3_db/knowledge_vault.db"
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
@@ -31,9 +30,9 @@ class KnowledgeCategory(Base):
 Base.metadata.create_all(bind=engine)
 
 # ChromaDB setup (Vector DB)
-CHROMA_PATH = "./chroma_db"
+CHROMA_PATH = "home/jhli/knowledge-helper/vault/chroma_db/chroma.sqlite3"
 chroma_client = chromadb.PersistentClient(path=CHROMA_PATH)
-embeddings = OpenAIEmbeddings()
+embeddings = HuggingFaceEmbeddings(model_name="/home/jhli/all-in-rag/bge-small-zh-v1.5")
 
 # Collection for our knowledge
 collection = chroma_client.get_or_create_collection(name="fragmented_knowledge")
@@ -80,19 +79,25 @@ async def commit_to_storage(question: str, answer: str, tags: List[str], categor
     finally:
         db.close()
 
-async def get_vault_data():
+async def get_vault_data(category=None):
     """
-    Fetch all approved knowledge items for the frontend.
+    Fetch approved knowledge items for the frontend, optionally filtered by category.
     """
     db = SessionLocal()
     try:
-        items = db.query(KnowledgeItem).filter(KnowledgeItem.status == "approved").all()
+        query = db.query(KnowledgeItem).filter(KnowledgeItem.status == "approved")
+        
+        if category:
+            query = query.filter(KnowledgeItem.category == category)
+        
+        items = query.all()
         return [
             {
                 "id": item.id,
                 "question": item.question,
                 "answer": item.answer,
                 "tags": json.loads(item.tags),
+                "category": item.category,
                 "created_at": item.created_at.isoformat()
             }
             for item in items
@@ -151,33 +156,37 @@ async def add_category(name: str):
     finally:
         db.close()
 
-async def commit_item_with_category(question: str, answer: str, tags: List[str], category: str):
+async def commit_item_with_category(items: List, category: str):
     """
     Commit to SQL and Vector DB with category.
     """
     db = SessionLocal()
     try:
-        new_item = KnowledgeItem(
-            question=question,
-            answer=answer,
-            tags=json.dumps(tags),
-            category=category,
-            status="approved"
-        )
-        db.add(new_item)
-        db.commit()
-        db.refresh(new_item)
+        for item in items:
+            question = item.question
+            answer = item.answer
+            tags = item.tags
+            new_item = KnowledgeItem(
+                question=question,
+                answer=answer,
+                tags=json.dumps(tags),
+                category=category,
+                status="approved"
+            )
+            db.add(new_item)
+            db.commit()
+            db.refresh(new_item)
 
-        # Vector Storage
-        text_to_embed = f"Question: {question}\nAnswer: {answer}"
-        embedding_vector = embeddings.embed_query(text_to_embed)
+            # Vector Storage
+            text_to_embed = f"Question: {question}\nAnswer: {answer}"
+            embedding_vector = embeddings.embed_query(text_to_embed)
 
-        collection.add(
-            ids=[str(new_item.id)],
-            embeddings=[embedding_vector],
-            metadatas=[{"question": question, "tags": ",".join(tags), "category": category}],
-            documents=[text_to_embed]
-        )
+            collection.add(
+                ids=[str(new_item.id)],
+                embeddings=[embedding_vector],
+                metadatas=[{"question": question, "tags": ",".join(tags), "category": category}],
+                documents=[text_to_embed]
+            )
 
         return True
     except Exception as e:

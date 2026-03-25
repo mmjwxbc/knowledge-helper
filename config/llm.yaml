@@ -1,5 +1,5 @@
 DeepSeek:
-  API_KEY: sk-a1bc19bfbb3848659b05a24d57ccb9ef
+  API_KEY: sk-d1fca1676b624c6cb783278cbe833673
   BASE_URL: https://api.deepseek.com/chat/completions
   MODEL_ID: deepseek-chat
 BAILIAN:

@@ -7,3 +7,4 @@ node_modules
 backend/bilisub_output/
 __pycache__
 output
+*.pyc
