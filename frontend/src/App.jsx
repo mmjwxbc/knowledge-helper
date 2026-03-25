@@ -14,6 +14,7 @@ const DataManagerPage = () => {
   const [url, setUrl] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('');
   const [addCategoryModal, setAddCategoryModal] = useState(false);
+  const [selectedItems, setSelectedItems] = useState([]);
   const [form] = Form.useForm();
 
   // 获取数据库类别
@@ -105,24 +106,38 @@ const DataManagerPage = () => {
     if (!currentResult) return;
 
     try {
-      const response = await fetch(`${API_BASE}/commit`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: currentResult.id,
-          question: currentResult.question,
-          answer: currentResult.answer,
-          tags: currentResult.tags,
-          category: currentResult.category,
-        }),
-      });
+      // 确定要提交的项目索引
+      const indicesToSubmit = selectedItems.length > 0 
+        ? selectedItems 
+        : Array.from({ length: currentResult.questions?.length || 0 }, (_, i) => i);
 
-      const data = await response.json();
-      if (data.status === 'success') {
-        message.success('数据已成功入库');
+      // 逐个提交项目
+      let successCount = 0;
+      for (const index of indicesToSubmit) {
+        const response = await fetch(`${API_BASE}/commit`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: currentResult.id,
+            question: currentResult.questions[index],
+            answer: currentResult.answers[index],
+            tags: currentResult.tags[index],
+            category: currentResult.category,
+          }),
+        });
+
+        const data = await response.json();
+        if (data.status === 'success') {
+          successCount++;
+        }
+      }
+
+      if (successCount > 0) {
+        message.success(`成功入库 ${successCount} 个项目`);
         await fetchVaultData();
         setStatus('finished');
         setCurrentResult(null);
+        setSelectedItems([]);
       } else {
         message.error('入库失败');
       }
@@ -229,23 +244,45 @@ const DataManagerPage = () => {
         )}
 
         {status === 'reviewing' && currentResult && (
-          <Card title="后端处理结果预览" extra={<span style={{ color: '#1890ff' }}>待确认</span>}>
+          <Card title={`后端处理结果预览 (共 ${currentResult.questions?.length || 0} 个问题)`} extra={<span style={{ color: '#1890ff' }}>待确认</span>}>
             <div style={{ marginBottom: '16px' }}>
               <strong>类别：</strong> {currentResult.category}
             </div>
-            <div style={{ marginBottom: '16px' }}>
-              <strong>标签：</strong> {currentResult.tags?.join(', ') || '无'}
-            </div>
-            <div style={{ marginBottom: '16px' }}>
-              <strong>问题：</strong>
-              <p style={{ marginTop: '4px' }}>{currentResult.question}</p>
-            </div>
-            <div style={{ marginBottom: '16px' }}>
-              <strong>答案：</strong>
-              <pre style={{ background: '#f5f5f5', padding: '10px', marginTop: '4px' }}>
-                {currentResult.answer}
-              </pre>
-            </div>
+            
+            {currentResult.questions && currentResult.questions.map((question, index) => (
+              <Card key={index} style={{ marginBottom: '16px', borderLeft: '4px solid #1890ff' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <div>
+                    <strong>问题 {index + 1}：</strong>
+                  </div>
+                  <div>
+                    <input
+                      type="checkbox"
+                      checked={selectedItems.includes(index)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedItems([...selectedItems, index]);
+                        } else {
+                          setSelectedItems(selectedItems.filter(idx => idx !== index));
+                        }
+                      }}
+                    />
+                    <span style={{ marginLeft: '8px' }}>选择</span>
+                  </div>
+                </div>
+                <p style={{ marginBottom: '12px' }}>{question}</p>
+                <div style={{ marginBottom: '8px' }}>
+                  <strong>答案：</strong>
+                </div>
+                <pre style={{ background: '#f5f5f5', padding: '10px', marginBottom: '8px' }}>
+                  {currentResult.answers && currentResult.answers[index]}
+                </pre>
+                <div>
+                  <strong>标签：</strong> {currentResult.tags && currentResult.tags[index] ? currentResult.tags[index].join(', ') : '无'}
+                </div>
+              </Card>
+            ))}
+            
             <div style={{ marginTop: '20px' }}>
               <p>如果不满意，请输入修正提示：</p>
               <Input.TextArea
@@ -258,7 +295,7 @@ const DataManagerPage = () => {
                   发送修正
                 </Button>
                 <Button type="primary" icon={<CheckCircleOutlined />} onClick={handleConfirm}>
-                  满意，确认入库
+                  {selectedItems.length > 0 ? `确认入库选中的 ${selectedItems.length} 个项目` : '确认入库所有项目'}
                 </Button>
               </Space>
             </div>

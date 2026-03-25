@@ -7,13 +7,27 @@ from contextlib import asynccontextmanager
 from .ingestion import process_content, refine_content_with_feedback, get_staging_data, clear_staging_data
 from .storage import get_vault_data, get_categories, add_category, commit_item_with_category, init_default_categories
 from .agent import get_chat_response
+from xhs_downloader.application.app import XHS
+from .deps import get_xhs_instance, get_llm_instance, get_qa_router_instance
+# @asynccontextmanager
+# async def lifespan(_app: FastAPI):
+#     # Initialize default categories on startup
+#     await init_default_categories()
+    
+#     yield
+
+xhs_client: XHS = None
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     # Initialize default categories on startup
     await init_default_categories()
-    yield
-    # Cleanup if needed
+    client = await get_xhs_instance()
+    llm = await get_llm_instance()
+    qa_router = await get_qa_router_instance()
+    async with client: 
+        print("XHS 全局实例已进入上下文 (__aenter__ 已执行)")
+        yield
 
 app = FastAPI(title="Fragmented Learning Assistant API", lifespan=lifespan)
 

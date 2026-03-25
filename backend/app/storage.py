@@ -191,6 +191,6 @@ async def init_default_categories():
     """
     Initialize default categories if they don't exist.
     """
-    default_cats = ["客户信息库", "产品说明书", "财务报表"]
+    default_cats = ["agent", "llm", "diffusion and flow"]
     for cat in default_cats:
         await add_category(cat)

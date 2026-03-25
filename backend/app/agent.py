@@ -3,6 +3,7 @@ import json
 from typing import TypedDict, List, Annotated, Sequence, Dict, Any, Union, Optional
 from langchain_openai import OpenAIEmbeddings
 from langchain_deepseek import ChatDeepSeek
+from langchain_openai import ChatOpenAI
 from dotenv import load_dotenv
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
 from langgraph.graph import StateGraph, END
@@ -61,8 +62,13 @@ async def generate_node(state: AgentState):
     """
     Generate final response using LLM.
     """
-    llm = ChatDeepSeek(model=os.getenv("MODEL_ID"), temperature=0.7, api_key=os.getenv("OPENAI_API_KEY"), base_url=os.getenv("OPENAI_API_BASE_URL"))
-    
+    # llm = ChatDeepSeek(model=os.getenv("MODEL_ID"), temperature=0.7, api_key=os.getenv("OPENAI_API_KEY"), base_url=os.getenv("OPENAI_API_BASE_URL"))
+    llm = ChatOpenAI(
+    api_key=os.getenv("OPENAI_API_KEY"),
+    base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+    model=os.getenv("MODEL_ID"),  # 此处以qwen-plus为例，您可按需更换模型名称。模型列表：https://help.aliyun.com/zh/model-studio/getting-started/models
+    # other params...
+)
     context_str = "\n---\n".join(state["context"])
     system_prompt = f"""
     You are a Fragmented Learning AI Tutor. Your goal is to help users learn based on their collected knowledge.
