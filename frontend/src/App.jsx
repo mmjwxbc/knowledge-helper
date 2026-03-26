@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Layout, Input, Select, Button, Space, Card, message, Modal, Form, Progress, Popconfirm, Typography } from 'antd';
-import { PlusOutlined, SendOutlined, CheckCircleOutlined, FolderOpenOutlined, DeleteOutlined, MessageOutlined, QuestionCircleOutlined, UserOutlined } from '@ant-design/icons';
+import { Layout, Input, Select, Button, Space, Card, message, Modal, Form, Progress, Popconfirm, Typography, Spin } from 'antd';
+import { PlusOutlined, SendOutlined, CheckCircleOutlined, FolderOpenOutlined, DeleteOutlined, MessageOutlined, QuestionCircleOutlined, UserOutlined, LoadingOutlined } from '@ant-design/icons';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 const { Sider, Content } = Layout;
 const API_BASE = 'http://localhost:8000/api';
@@ -30,7 +32,10 @@ const DataManagerPage = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [selectedChatCategory, setSelectedChatCategory] = useState('');
   const [showChatSidebar, setShowChatSidebar] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(280);
+  const [isResizing, setIsResizing] = useState(false);
   const messagesEndRef = useRef(null);
+  const sidebarRef = useRef(null);
 
   // 获取数据库类别
   useEffect(() => {
@@ -431,7 +436,8 @@ const DataManagerPage = () => {
       setChatMessages(prev => [...prev, {
         id: aiMessageId,
         content: '',
-        type: 'ai'
+        type: 'ai',
+        loading: true
       }]);
 
       while (true) {
@@ -450,7 +456,7 @@ const DataManagerPage = () => {
                 if (data.content) {
                   aiMessageContent += data.content;
                   setChatMessages(prev => prev.map(msg => 
-                    msg.id === aiMessageId ? { ...msg, content: aiMessageContent } : msg
+                    msg.id === aiMessageId ? { ...msg, content: aiMessageContent, loading: false } : msg
                   ));
                 }
               } catch (e) {
@@ -469,10 +475,41 @@ const DataManagerPage = () => {
     }
   };
 
+  // 处理侧边栏 resize
+  const handleMouseDown = (e) => {
+    e.preventDefault();
+    setIsResizing(true);
+  };
+
+  useEffect(() => {
+    const handleMouseMove = (e) => {
+      if (!isResizing) return;
+      
+      const sidebarRect = sidebarRef.current.getBoundingClientRect();
+      const newWidth = e.clientX - sidebarRect.left;
+      
+      if (newWidth > 200 && newWidth < 500) {
+        setSidebarWidth(newWidth);
+      }
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isResizing]);
+
   return (
     <Layout style={{ height: '100vh', width: '100%', display: 'flex', margin: 0, padding: 0 }}>
       {/* 左侧数据上传面板 */}
-      <Sider width={280} theme="light" style={{ borderRight: '1px solid #f0f0f0', padding: '24px', background: '#fafafa', overflowY: 'auto' }}>
+      <Sider width={280} theme="light" style={{ borderRight: '1px solid #f0f0f0', padding: '24px', background: '#fafafa', overflowY: 'auto', flexShrink: 0 }}>
         <div style={{ marginBottom: '24px' }}>
           <h2 style={{ margin: '0 0 8px 0', fontSize: '20px', fontWeight: 600, color: '#262626' }}>数据上传</h2>
           <p style={{ margin: '0', fontSize: '13px', color: '#8c8c8c' }}>支持 B站、小红书等平台</p>
@@ -554,7 +591,7 @@ const DataManagerPage = () => {
       </Sider>
 
       {/* 中间内容区域 */}
-      <Layout style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <Layout style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
         <Content style={{ padding: '32px', background: '#ffffff', overflow: 'auto', flex: 1 }}>
           {status === 'idle' && (
             <div style={{ textAlign: 'center', marginTop: '120px', color: '#999' }}>
@@ -840,7 +877,33 @@ const DataManagerPage = () => {
       </Layout>
 
       {/* 右侧任务队列和聊天侧边栏 */}
-      <Sider width={280} theme="light" style={{ borderLeft: '1px solid #f0f0f0', background: '#fafafa', overflowY: 'auto' }}>
+      <Sider 
+        width={sidebarWidth} 
+        theme="light" 
+        style={{ 
+          borderLeft: '1px solid #f0f0f0', 
+          background: '#fafafa', 
+          overflowY: 'auto',
+          position: 'relative',
+          flexShrink: 0
+        }}
+        ref={sidebarRef}
+      >
+        {/*  resize handle */}
+        <div 
+          style={{
+            position: 'absolute',
+            left: 0,
+            top: 0,
+            bottom: 0,
+            width: '5px',
+            cursor: isResizing ? 'col-resize' : 'ew-resize',
+            backgroundColor: isResizing ? '#1890ff' : 'transparent',
+            zIndex: 10
+          }}
+          onMouseDown={handleMouseDown}
+        />
+        <div style={{ marginLeft: '5px' }}>
         {!showChatSidebar ? (
           <div style={{ padding: '24px' }}>
             <div style={{ marginBottom: '16px' }}>
@@ -961,7 +1024,20 @@ const DataManagerPage = () => {
                           boxShadow: '0 1px 2px rgba(0,0,0,0.1)'
                         }}
                       >
-                        <Typography.Text style={{ lineHeight: '1.6' }}>{message.content}</Typography.Text>
+                        {message.loading ? (
+                          <div style={{ display: 'flex', alignItems: 'center' }}>
+                            <Spin size="small" indicator={<LoadingOutlined style={{ color: '#1890ff' }} spin />} />
+                            <span style={{ marginLeft: '8px' }}>助手正在思考...</span>
+                          </div>
+                        ) : message.type === 'user' ? (
+                          <Typography.Text style={{ lineHeight: '1.6' }}>{message.content}</Typography.Text>
+                        ) : (
+                          <div style={{ lineHeight: '1.6' }}>
+                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                              {message.content}
+                            </ReactMarkdown>
+                          </div>
+                        )}
                       </div>
                       {message.type === 'user' && (
                         <UserOutlined style={{ fontSize: '18px', color: '#1890ff', marginLeft: '8px', marginTop: '2px' }} />
@@ -1005,6 +1081,7 @@ const DataManagerPage = () => {
             </div>
           </div>
         )}
+        </div>
       </Sider>
 
       {/* 添加新类别模态框 */}
