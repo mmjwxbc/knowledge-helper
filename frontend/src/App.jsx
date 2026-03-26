@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Layout, Input, Select, Button, Space, Card, message, Modal, Form, Progress } from 'antd';
-import { PlusOutlined, SendOutlined, CheckCircleOutlined, FolderOpenOutlined } from '@ant-design/icons';
+import { Layout, Input, Select, Button, Space, Card, message, Modal, Form, Progress, Popconfirm } from 'antd';
+import { PlusOutlined, SendOutlined, CheckCircleOutlined, FolderOpenOutlined, DeleteOutlined } from '@ant-design/icons';
 
 const { Sider, Content } = Layout;
 const API_BASE = 'http://localhost:8000/api';
@@ -21,6 +21,8 @@ const DataManagerPage = () => {
   const [confirmStatus, setConfirmStatus] = useState('idle'); // idle, confirming
   const [taskQueue, setTaskQueue] = useState([]);
   const [currentTaskId, setCurrentTaskId] = useState(null);
+  const [deleteModalVisible, setDeleteModalVisible] = useState(false);
+  const [itemToDelete, setItemToDelete] = useState(null);
 
   // 获取数据库类别
   useEffect(() => {
@@ -57,6 +59,27 @@ const DataManagerPage = () => {
 
   const fetchVaultData = async () => {
     await fetchVaultDataByCategory();
+  };
+
+  // Delete vault item
+  const handleDeleteItem = async (itemId) => {
+    try {
+      const response = await fetch(`${API_BASE}/vault/delete`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ item_id: itemId }),
+      });
+      const data = await response.json();
+      if (data.success) {
+        message.success('删除成功');
+        await fetchVaultDataByCategory(selectedCategory);
+      } else {
+        message.error('删除失败');
+      }
+    } catch (error) {
+      console.error('删除失败:', error);
+      message.error('删除失败，请检查网络连接');
+    }
   };
 
   // 开始处理URL
@@ -104,6 +127,7 @@ const DataManagerPage = () => {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
 
+      let buffer = '';
       let done = false;
       let timeoutId;
       
@@ -120,13 +144,16 @@ const DataManagerPage = () => {
           const { value, done: doneReading } = await reader.read();
           done = doneReading;
           const chunk = decoder.decode(value, { stream: true });
-          
-          // 处理SSE事件
-          const events = chunk.split('\n\n');
+
+          // 处理SSE事件 - 使用缓冲区处理不完整的事件
+          const events = (buffer + chunk).split('\n\n');
+          buffer = events.pop() || ''; // 保留最后一个可能不完整的事件
+
           for (const event of events) {
             if (event.startsWith('data:')) {
               const dataStr = event.substring(5).trim();
-              if (dataStr) {
+              // 跳过空数据和[DONE]信号
+              if (dataStr && dataStr !== '[DONE]') {
                 try {
                   const data = JSON.parse(dataStr);
                   console.log('收到SSE数据:', data);
@@ -143,7 +170,7 @@ const DataManagerPage = () => {
                       // 处理后端返回的错误
                       message.error(data.result.error);
                       // 更新任务状态为失败
-                      setTaskQueue(prev => prev.map(t => 
+                      setTaskQueue(prev => prev.map(t =>
                         t.id === task.id ? { ...t, status: 'failed', error: data.result.error } : t
                       ));
                       setStatus('idle');
@@ -152,9 +179,9 @@ const DataManagerPage = () => {
                       setCurrentResult(data.result);
                       setStatus('reviewing');
                       // 更新任务状态为完成
-                      setTaskQueue(prev => prev.map(t => 
-                        t.id === task.id ? { 
-                          ...t, 
+                      setTaskQueue(prev => prev.map(t =>
+                        t.id === task.id ? {
+                          ...t,
                           status: 'completed',
                           title: data.result.title || data.result.preview?.split('\n')[0] || task.title
                         } : t
@@ -163,13 +190,13 @@ const DataManagerPage = () => {
                   } else if (data.status === 'error') {
                     message.error(data.message);
                     // 更新任务状态为失败
-                    setTaskQueue(prev => prev.map(t => 
+                    setTaskQueue(prev => prev.map(t =>
                       t.id === task.id ? { ...t, status: 'failed', error: data.message } : t
                     ));
                     setStatus('idle');
                   }
                 } catch (e) {
-                  console.error('解析SSE数据失败:', e);
+                  console.error('解析SSE数据失败:', e, '原始数据:', dataStr);
                 }
               }
             }
@@ -670,9 +697,29 @@ const DataManagerPage = () => {
                     }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
                         <h4 style={{ margin: '0', fontSize: '15px', lineHeight: '1.4', flex: 1, marginRight: '12px' }}>{item.question}</h4>
-                        <span style={{ fontSize: '12px', color: '#999', whiteSpace: 'nowrap' }}>
-                          {new Date(item.created_at).toLocaleDateString('zh-CN')}
-                        </span>
+                        <Space>
+                          <span style={{ fontSize: '12px', color: '#999', whiteSpace: 'nowrap' }}>
+                            {new Date(item.created_at).toLocaleDateString('zh-CN')}
+                          </span>
+                          <Popconfirm
+                            title="确定要删除这条知识吗？"
+                            description="删除后将无法恢复"
+                            onConfirm={() => handleDeleteItem(item.id)}
+                            okText="确定"
+                            cancelText="取消"
+                          >
+                            <Button
+                              type="text"
+                              danger
+                              icon={<DeleteOutlined />}
+                              size="small"
+                              style={{ marginLeft: '8px' }}
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              删除
+                            </Button>
+                          </Popconfirm>
+                        </Space>
                       </div>
                       <div style={{ fontSize: '12px', color: '#999', marginBottom: '8px' }}>
                         <span style={{ background: '#f0f0f0', padding: '2px 8px', borderRadius: '4px' }}>{item.category}</span>

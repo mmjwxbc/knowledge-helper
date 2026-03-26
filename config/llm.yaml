@@ -1,8 +1,8 @@
 DeepSeek:
-  API_KEY: sk-d1fca1676b624c6cb783278cbe833673
+  API_KEY: 
   BASE_URL: https://api.deepseek.com/chat/completions
   MODEL_ID: deepseek-chat
 BAILIAN:
-  API_KEY: sk-dacf35f232054cc08beaaa592fcfe53e
+  API_KEY: 
   BASE_URL: https://dashscope.aliyuncs.com/compatible-mode/v1
   MODEL_ID: qwen3.5-plus

@@ -7,7 +7,14 @@ from langchain_deepseek import ChatDeepSeek
 import os
 import asyncio
 from enum import Enum
+import time
 
+def log(msg):
+    # 日期时间部分（红色）
+    time_str = time.strftime("%Y-%m-%d %H:%M:%S")
+    red_time = f"\033[31m[{time_str}]\033[0m"
+    # 打印
+    print(f"{red_time} {msg}")
 # ============ 数据模型定义 ============
 
 class ContentCategory(str, Enum):
@@ -232,8 +239,10 @@ class QARouter:
             progress_callback(45, "正在分析内容类型...")
 
         # Step 1: 意图分类
+        log("Start Classifier")
         classifier_chain = self.classifier.create_classifier_chain()
         category_result = await classifier_chain.ainvoke({"content": text[:2000]})
+        log(f"Classifier {category_result}")
 
         print(f"[路由决策] 分类: {category_result.category}, 理由: {category_result.reasoning}")
 
@@ -255,10 +264,12 @@ class QARouter:
         try:
             if progress_callback:
                 progress_callback(55, "正在生成问题和答案...")
+            log("Start Content Router")      
             result = await selected_processor.ainvoke({
                 "content": text[:4000],  # 保留更多上下文
                 "feedback": feedback or "无特殊反馈"
             })
+            log(f"Content: {result}")
             
             # 统一输出格式
             if isinstance(result, QAItem):

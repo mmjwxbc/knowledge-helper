@@ -30,7 +30,7 @@ class KnowledgeCategory(Base):
 Base.metadata.create_all(bind=engine)
 
 # ChromaDB setup (Vector DB)
-CHROMA_PATH = "home/jhli/knowledge-helper/vault/chroma_db/chroma.sqlite3"
+CHROMA_PATH = "/home/jhli/knowledge-helper/vault/chroma_db"
 chroma_client = chromadb.PersistentClient(path=CHROMA_PATH)
 embeddings = HuggingFaceEmbeddings(model_name="/home/jhli/all-in-rag/bge-small-zh-v1.5")
 
@@ -203,3 +203,31 @@ async def init_default_categories():
     default_cats = ["agent", "llm", "diffusion and flow"]
     for cat in default_cats:
         await add_category(cat)
+        
+async def delete_vault_item_data(item_id: str):
+    """
+    Delete an approved item from the knowledge vault.
+    """
+    db = SessionLocal()
+    try:
+        item = db.query(KnowledgeItem).filter(KnowledgeItem.id == int(item_id)).first()
+        if not item:
+            return False
+        
+        # Delete from SQL database
+        db.delete(item)
+        db.commit()
+        
+        # Delete from ChromaDB
+        try:
+            collection.delete(ids=[str(item_id)])
+        except Exception as e:
+            print(f"Error deleting from ChromaDB: {str(e)}")
+            # Continue even if ChromaDB delete fails
+        
+        return True
+    except Exception:
+        db.rollback()
+        return False
+    finally:
+        db.close()

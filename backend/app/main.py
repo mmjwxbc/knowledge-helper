@@ -1,11 +1,13 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
+import uuid
+from datetime import datetime
 
 from .ingestion import process_content, refine_content_with_feedback, get_staging_data, clear_staging_data
-from .storage import get_vault_data, get_categories, add_category, commit_item_with_category, init_default_categories
+from .storage import get_vault_data, get_categories, add_category, commit_item_with_category, init_default_categories, delete_vault_item_data
 from .agent import get_chat_response
 from xhs_downloader.application.app import XHS
 from .deps import get_xhs_instance, get_llm_instance, get_qa_router_instance
@@ -13,10 +15,20 @@ from .deps import get_xhs_instance, get_llm_instance, get_qa_router_instance
 # async def lifespan(_app: FastAPI):
 #     # Initialize default categories on startup
 #     await init_default_categories()
-    
+#     
 #     yield
+import time
+def log(msg):
+    # 日期时间部分（红色）
+    time_str = time.strftime("%Y-%m-%d %H:%M:%S")
+    red_time = f"\033[31m[{time_str}]\033[0m"
+    # 打印
+    print(f"{red_time} {msg}")
 
 xhs_client: XHS = None
+
+# 全局任务队列
+task_queue: Dict[str, Dict[str, Any]] = {}
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -96,12 +108,34 @@ async def process_url(input: URLInput):
     import json
     import asyncio
 
+    # Generate task ID
+    task_id = str(uuid.uuid4())
+    
+    # Create task object
+    task = {
+        "id": task_id,
+        "url": input.url,
+        "category": input.category or "未分类",
+        "status": "processing",
+        "progress": 0,
+        "message": "开始处理URL",
+        "created": datetime.now().isoformat(),
+        "updated": datetime.now().isoformat()
+    }
+    
+    # Add to global task queue
+    task_queue[task_id] = task
+
     # Create a queue to pass progress updates
     progress_queue = asyncio.Queue()
 
     async def process_with_progress():
         """Process content and send progress updates to the queue"""
         def progress_callback(progress, message):
+            # Update task status
+            task["progress"] = progress
+            task["message"] = message
+            task["updated"] = datetime.now().isoformat()
             # Send progress update to the queue
             asyncio.create_task(progress_queue.put((progress, message)))
 
@@ -112,9 +146,23 @@ async def process_url(input: URLInput):
                 category=input.category or "未分类",
                 progress_callback=progress_callback
             )
+            log("完成process url")
+            # Update task status
+            task["status"] = "completed"
+            task["progress"] = 100
+            task["message"] = "处理完成"
+            task["result"] = result
+            task["updated"] = datetime.now().isoformat()
             # Send final result to the queue
+            print(f"[完成] 发送最终结果到queue，result类型: {type(result)}")
             await progress_queue.put((100, "处理完成", result))
         except Exception as e:
+            # Update task status
+            task["status"] = "failed"
+            task["progress"] = 100
+            task["message"] = f"处理失败: {str(e)}"
+            task["error"] = str(e)
+            task["updated"] = datetime.now().isoformat()
             # Send error message to the queue
             await progress_queue.put((100, f"处理失败: {str(e)}", {"error": str(e)}))
 
@@ -135,6 +183,7 @@ async def process_url(input: URLInput):
                 if len(item) == 3:
                     # Final result
                     progress, message, result = item
+                    print(f"[SSE] 发送completed事件, result类型: {type(result)}")
                     yield f"data: {json.dumps({'status': 'completed', 'result': result})}\n\n"
                     break
                 else:
@@ -142,9 +191,89 @@ async def process_url(input: URLInput):
                     progress, message = item
                     yield f"data: {json.dumps({'status': 'processing', 'progress': progress, 'message': message})}\n\n"
             except asyncio.TimeoutError:
+                # Update task status
+                task["status"] = "failed"
+                task["message"] = "处理超时"
+                task["error"] = "处理超时"
+                task["updated"] = datetime.now().isoformat()
                 # Send timeout message
                 yield f"data: {json.dumps({'status': 'error', 'message': '处理超时'})}\n\n"
+
                 break
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream"
+    )
+
+@app.get("/api/tasks")
+async def get_tasks():
+    """
+    Get all tasks in the queue.
+    """
+    return {"tasks": list(task_queue.values())}
+
+@app.get("/api/tasks/{task_id}")
+async def get_task(task_id: str):
+    """
+    Get a specific task by ID.
+    """
+    if task_id not in task_queue:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return {"task": task_queue[task_id]}
+
+@app.get("/api/tasks/{task_id}/progress")
+async def get_task_progress(task_id: str):
+    """
+    Get progress updates for a specific task via SSE.
+    """
+    if task_id not in task_queue:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    from fastapi.responses import StreamingResponse
+    import json
+    import asyncio
+
+    task = task_queue[task_id]
+
+    async def event_generator():
+        """Generate SSE events for the task progress"""
+        # Send current task status
+        if task["status"] == "processing":
+            yield f"data: {json.dumps({'status': 'processing', 'progress': task['progress'], 'message': task['message']})}\n\n"
+        elif task["status"] == "completed" and "result" in task:
+            yield f"data: {json.dumps({'status': 'completed', 'result': task['result']})}\n\n"
+        elif task["status"] == "failed" and "error" in task:
+            yield f"data: {json.dumps({'status': 'error', 'message': task['error']})}\n\n"
+
+        # If task is not completed, wait for updates
+        if task["status"] == "processing":
+            # Create a queue to receive progress updates
+            progress_queue = asyncio.Queue()
+
+            # Function to check task status periodically
+            async def check_task_status():
+                while task["status"] == "processing":
+                    await asyncio.sleep(1)  # Check every second
+                    # Send progress update if it has changed
+                    await progress_queue.put((task["progress"], task["message"]))
+
+            # Start checking task status
+            asyncio.create_task(check_task_status())
+
+            # Listen for progress updates
+            while task["status"] == "processing":
+                try:
+                    # Get progress update from queue with timeout
+                    item = await asyncio.wait_for(progress_queue.get(), timeout=300.0)
+                    
+                    # Progress update
+                    progress, message = item
+                    yield f"data: {json.dumps({'status': 'processing', 'progress': progress, 'message': message})}\n\n"
+                except asyncio.TimeoutError:
+                    # Send timeout message
+                    yield f"data: {json.dumps({'status': 'error', 'message': '处理超时'})}\n\n"
+                    break
 
     return StreamingResponse(
         event_generator(),
@@ -191,6 +320,16 @@ async def get_vault(category: Optional[str] = None):
     """
     data = await get_vault_data(category)
     return {"items": data}
+
+
+@app.delete("/api/vault/delete")
+async def delete_vault_item(item: dict):
+    """
+    Delete an approved item from the knowledge vault.
+    """
+    item_id = item.get("item_id")
+    success = await delete_vault_item_data(item_id)
+    return {"success": success}
 
 # Legacy Endpoints (kept for backward compatibility)
 @app.post("/process")
