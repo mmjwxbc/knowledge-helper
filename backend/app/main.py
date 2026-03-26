@@ -363,7 +363,7 @@ async def get_vault_legacy():
     data = await get_vault_data()
     return data
 
-@app.post("/chat")
+@app.post("/api/chat")
 async def chat(input: ChatInput):
     """
     Chat with AI tutor using LangGraph Agent.

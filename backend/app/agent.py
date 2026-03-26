@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
 from langgraph.graph import StateGraph, END
 from .storage import collection, embeddings, get_items_by_ids
-
+from .deps import get_llm_instance
 load_dotenv()
 
 # Define State
@@ -63,12 +63,7 @@ async def generate_node(state: AgentState):
     Generate final response using LLM.
     """
     # llm = ChatDeepSeek(model=os.getenv("MODEL_ID"), temperature=0.7, api_key=os.getenv("OPENAI_API_KEY"), base_url=os.getenv("OPENAI_API_BASE_URL"))
-    llm = ChatOpenAI(
-    api_key=os.getenv("OPENAI_API_KEY"),
-    base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-    model=os.getenv("MODEL_ID"),  # 此处以qwen-plus为例，您可按需更换模型名称。模型列表：https://help.aliyun.com/zh/model-studio/getting-started/models
-    # other params...
-)
+    llm = await get_llm_instance()
     context_str = "\n---\n".join(state["context"])
     system_prompt = f"""
     You are a Fragmented Learning AI Tutor. Your goal is to help users learn based on their collected knowledge.
@@ -125,7 +120,7 @@ async def get_chat_response(message: str, referenced_ids: Optional[List[int]] = 
     final_state = await app_graph.ainvoke(initial_state)
     
     # 2. Re-run LLM for streaming
-    llm = ChatDeepSeek(model=os.getenv("MODEL_ID"), temperature=0.7, api_key=os.getenv("OPENAI_API_KEY"), base_url=os.getenv("OPENAI_API_BASE_URL"), streaming=True)
+    llm = await get_llm_instance()
     context_str = "\n---\n".join(final_state["context"])
     
     system_prompt = f"""

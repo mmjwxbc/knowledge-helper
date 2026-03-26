@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { Layout, Input, Select, Button, Space, Card, message, Modal, Form, Progress, Popconfirm } from 'antd';
-import { PlusOutlined, SendOutlined, CheckCircleOutlined, FolderOpenOutlined, DeleteOutlined } from '@ant-design/icons';
+import React, { useState, useEffect, useRef } from 'react';
+import { Layout, Input, Select, Button, Space, Card, message, Modal, Form, Progress, Popconfirm, Typography } from 'antd';
+import { PlusOutlined, SendOutlined, CheckCircleOutlined, FolderOpenOutlined, DeleteOutlined, MessageOutlined, QuestionCircleOutlined, UserOutlined } from '@ant-design/icons';
 
 const { Sider, Content } = Layout;
 const API_BASE = 'http://localhost:8000/api';
@@ -23,6 +23,14 @@ const DataManagerPage = () => {
   const [currentTaskId, setCurrentTaskId] = useState(null);
   const [deleteModalVisible, setDeleteModalVisible] = useState(false);
   const [itemToDelete, setItemToDelete] = useState(null);
+  
+  // 聊天功能状态
+  const [chatMessages, setChatMessages] = useState([]);
+  const [chatInput, setChatInput] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [selectedChatCategory, setSelectedChatCategory] = useState('');
+  const [showChatSidebar, setShowChatSidebar] = useState(false);
+  const messagesEndRef = useRef(null);
 
   // 获取数据库类别
   useEffect(() => {
@@ -389,6 +397,78 @@ const DataManagerPage = () => {
     }
   };
 
+  // 发送聊天消息
+  const handleSendMessage = async () => {
+    if (!chatInput.trim()) return;
+
+    const userMessage = {
+      id: Date.now(),
+      content: chatInput,
+      type: 'user'
+    };
+
+    setChatMessages(prev => [...prev, userMessage]);
+    setChatInput('');
+    setIsLoading(true);
+
+    try {
+      const response = await fetch(`${API_BASE}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: chatInput, referenced_ids: [] }),
+      });
+
+      if (!response.ok) {
+        throw new Error('网络响应错误');
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      
+      let aiMessageId = Date.now() + 1;
+      let aiMessageContent = '';
+      
+      setChatMessages(prev => [...prev, {
+        id: aiMessageId,
+        content: '',
+        type: 'ai'
+      }]);
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+        const lines = chunk.split('\n\n');
+
+        for (const line of lines) {
+          if (line.startsWith('data:')) {
+            const dataStr = line.substring(5).trim();
+            if (dataStr && dataStr !== '[DONE]') {
+              try {
+                const data = JSON.parse(dataStr);
+                if (data.content) {
+                  aiMessageContent += data.content;
+                  setChatMessages(prev => prev.map(msg => 
+                    msg.id === aiMessageId ? { ...msg, content: aiMessageContent } : msg
+                  ));
+                }
+              } catch (e) {
+                console.error('解析SSE数据失败:', e);
+              }
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error('发送消息失败:', error);
+      message.error('发送消息失败，请检查网络连接');
+      setChatMessages(prev => prev.slice(0, -1)); // 移除AI消息占位符
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   return (
     <Layout style={{ height: '100vh', width: '100%', display: 'flex', margin: 0, padding: 0 }}>
       {/* 左侧数据上传面板 */}
@@ -398,7 +478,7 @@ const DataManagerPage = () => {
           <p style={{ margin: '0', fontSize: '13px', color: '#8c8c8c' }}>支持 B站、小红书等平台</p>
         </div>
 
-        <Space direction="vertical" style={{ width: '100%' }} size="middle">
+        <Space orientation="vertical" style={{ width: '100%' }} size="middle">
           <div>
             <label style={{ fontSize: '13px', fontWeight: 500, color: '#595959', display: 'block', marginBottom: '8px' }}>输入URL地址</label>
             <Input
@@ -419,7 +499,7 @@ const DataManagerPage = () => {
               value={selectedCategory}
               onChange={setSelectedCategory}
               options={categories.map(c => ({ label: c, value: c }))}
-              dropdownRender={(menu) => (
+              popupRender={(menu) => (
                 <>
                   {menu}
                   <Button
@@ -459,6 +539,16 @@ const DataManagerPage = () => {
             style={{ height: '44px', borderRadius: '6px', fontSize: '15px', fontWeight: 500 }}
           >
             查看知识库
+          </Button>
+          
+          <Button
+            block
+            size="large"
+            icon={<MessageOutlined />}
+            onClick={() => setShowChatSidebar(!showChatSidebar)}
+            style={{ height: '44px', borderRadius: '6px', fontSize: '15px', fontWeight: 500 }}
+          >
+            对话助手
           </Button>
         </Space>
       </Sider>
@@ -744,76 +834,175 @@ const DataManagerPage = () => {
               )}
             </Card>
           )}
+
+
         </Content>
       </Layout>
 
-      {/* 右侧任务队列侧边栏 */}
-      <Sider width={280} theme="light" style={{ borderLeft: '1px solid #f0f0f0', padding: '24px', background: '#fafafa', overflowY: 'auto' }}>
-        <div style={{ marginBottom: '16px' }}>
-          <h2 style={{ margin: '0 0 8px 0', fontSize: '18px', fontWeight: 600, color: '#262626' }}>任务队列</h2>
-          <span style={{ fontSize: '12px', color: '#8c8c8c', background: '#f0f0f0', padding: '2px 8px', borderRadius: '4px' }}>
-            {taskQueue.length} 个任务
-          </span>
-        </div>
-        {taskQueue.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '40px 0', color: '#999' }}>
-            <div style={{ fontSize: '48px', marginBottom: '12px' }}>📋</div>
-            <p style={{ fontSize: '14px' }}>暂无任务</p>
-          </div>
-        ) : (
-          <div>
-            {taskQueue.map((task) => (
-              <Card
-                key={task.id}
-                size="small"
-                style={{
-                  marginBottom: '12px',
-                  borderLeft: task.status === 'processing' ? '3px solid #1890ff' :
-                             task.status === 'completed' ? '3px solid #52c41a' :
-                             task.status === 'failed' ? '3px solid #ff4d4f' : '3px solid #d9d9d9',
-                  borderRadius: '6px',
-                  boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
-                  cursor: task.status === 'completed' ? 'pointer' : 'default'
-                }}
-                onClick={() => {
-                  if (task.status === 'completed') {
-                    message.info('点击了已完成的任务');
-                  }
-                }}
-              >
-                <div style={{ marginBottom: '8px' }}>
-                  <div
+      {/* 右侧任务队列和聊天侧边栏 */}
+      <Sider width={280} theme="light" style={{ borderLeft: '1px solid #f0f0f0', background: '#fafafa', overflowY: 'auto' }}>
+        {!showChatSidebar ? (
+          <div style={{ padding: '24px' }}>
+            <div style={{ marginBottom: '16px' }}>
+              <h2 style={{ margin: '0 0 8px 0', fontSize: '18px', fontWeight: 600, color: '#262626' }}>任务队列</h2>
+              <span style={{ fontSize: '12px', color: '#8c8c8c', background: '#f0f0f0', padding: '2px 8px', borderRadius: '4px' }}>
+                {taskQueue.length} 个任务
+              </span>
+            </div>
+            {taskQueue.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '40px 0', color: '#999' }}>
+                <div style={{ fontSize: '48px', marginBottom: '12px' }}>📋</div>
+                <p style={{ fontSize: '14px' }}>暂无任务</p>
+              </div>
+            ) : (
+              <div>
+                {taskQueue.map((task) => (
+                  <Card
+                    key={task.id}
+                    size="small"
                     style={{
-                      fontSize: '14px',
-                      fontWeight: 500,
-                      color: task.status === 'completed' ? '#1890ff' : '#262626',
-                      lineHeight: '1.4'
+                      marginBottom: '12px',
+                      borderLeft: task.status === 'processing' ? '3px solid #1890ff' :
+                                 task.status === 'completed' ? '3px solid #52c41a' :
+                                 task.status === 'failed' ? '3px solid #ff4d4f' : '3px solid #d9d9d9',
+                      borderRadius: '6px',
+                      boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+                      cursor: task.status === 'completed' ? 'pointer' : 'default'
+                    }}
+                    onClick={() => {
+                      if (task.status === 'completed') {
+                        message.info('点击了已完成的任务');
+                      }
                     }}
                   >
-                    {task.title.length > 30 ? task.title.substring(0, 30) + '...' : task.title}
-                  </div>
+                    <div style={{ marginBottom: '8px' }}>
+                      <div
+                        style={{
+                          fontSize: '14px',
+                          fontWeight: 500,
+                          color: task.status === 'completed' ? '#1890ff' : '#262626',
+                          lineHeight: '1.4'
+                        }}
+                      >
+                        {task.title.length > 30 ? task.title.substring(0, 30) + '...' : task.title}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px' }}>
+                      <span style={{ color: '#8c8c8c' }}>{task.category}</span>
+                      <span style={{
+                        color: task.status === 'pending' ? '#faad14' :
+                               task.status === 'processing' ? '#1890ff' :
+                               task.status === 'completed' ? '#52c41a' : '#ff4d4f',
+                        fontWeight: 500
+                      }}>
+                        {task.status === 'pending' && '等待中'}
+                        {task.status === 'processing' && '处理中'}
+                        {task.status === 'completed' && '已完成'}
+                        {task.status === 'failed' && '失败'}
+                      </span>
+                    </div>
+                    {task.error && (
+                      <div style={{ fontSize: '11px', color: '#ff4d4f', marginTop: '8px', padding: '4px', background: '#fff2f0', borderRadius: '4px' }}>
+                        {task.error.length > 40 ? task.error.substring(0, 40) + '...' : task.error}
+                      </div>
+                    )}
+                  </Card>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ padding: '24px', borderBottom: '1px solid #e8e8e8' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <h2 style={{ margin: '0', fontSize: '18px', fontWeight: 600, color: '#262626' }}>对话助手</h2>
+                <Button size="small" onClick={() => setShowChatSidebar(false)}>关闭</Button>
+              </div>
+              <p style={{ margin: '0', fontSize: '13px', color: '#8c8c8c' }}>基于知识库的智能问答</p>
+            </div>
+            
+            {/* 聊天消息区域 */}
+            <div 
+              style={{ 
+                flex: 1, 
+                overflowY: 'auto', 
+                padding: '16px', 
+                background: '#fafafa'
+              }}
+              ref={messagesEndRef}
+            >
+              {chatMessages.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '60px 20px', color: '#999' }}>
+                  <div style={{ fontSize: '64px', marginBottom: '16px' }}>🤖</div>
+                  <p style={{ fontSize: '16px' }}>开始与助手对话吧！</p>
+                  <p style={{ fontSize: '14px', marginTop: '8px' }}>助手会基于知识库内容回答你的问题</p>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px' }}>
-                  <span style={{ color: '#8c8c8c' }}>{task.category}</span>
-                  <span style={{
-                    color: task.status === 'pending' ? '#faad14' :
-                           task.status === 'processing' ? '#1890ff' :
-                           task.status === 'completed' ? '#52c41a' : '#ff4d4f',
-                    fontWeight: 500
-                  }}>
-                    {task.status === 'pending' && '等待中'}
-                    {task.status === 'processing' && '处理中'}
-                    {task.status === 'completed' && '已完成'}
-                    {task.status === 'failed' && '失败'}
-                  </span>
-                </div>
-                {task.error && (
-                  <div style={{ fontSize: '11px', color: '#ff4d4f', marginTop: '8px', padding: '4px', background: '#fff2f0', borderRadius: '4px' }}>
-                    {task.error.length > 40 ? task.error.substring(0, 40) + '...' : task.error}
+              ) : (
+                chatMessages.map((message) => (
+                  <div 
+                    key={message.id} 
+                    style={{
+                      display: 'flex',
+                      marginBottom: '16px',
+                      justifyContent: message.type === 'user' ? 'flex-end' : 'flex-start'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'flex-start' }}>
+                      {message.type === 'ai' && (
+                            <QuestionCircleOutlined style={{ fontSize: '18px', color: '#1890ff', marginRight: '8px', marginTop: '2px' }} />
+                          )}
+                      <div 
+                        style={{
+                          maxWidth: '70%',
+                          padding: '12px 16px',
+                          borderRadius: '16px',
+                          backgroundColor: message.type === 'user' ? '#1890ff' : '#ffffff',
+                          color: message.type === 'user' ? '#ffffff' : '#333333',
+                          boxShadow: '0 1px 2px rgba(0,0,0,0.1)'
+                        }}
+                      >
+                        <Typography.Text style={{ lineHeight: '1.6' }}>{message.content}</Typography.Text>
+                      </div>
+                      {message.type === 'user' && (
+                        <UserOutlined style={{ fontSize: '18px', color: '#1890ff', marginLeft: '8px', marginTop: '2px' }} />
+                      )}
+                    </div>
                   </div>
-                )}
-              </Card>
-            ))}
+                ))
+              )}
+            </div>
+
+            {/* 输入区域 */}
+            <div style={{ padding: '16px', borderTop: '1px solid #e8e8e8', background: '#ffffff' }}>
+              <Input.TextArea
+                value={chatInput}
+                onChange={e => setChatInput(e.target.value)}
+                placeholder="输入你的问题..."
+                rows={2}
+                style={{ 
+                  marginBottom: '12px',
+                  resize: 'none',
+                  borderRadius: '8px'
+                }}
+                onPressEnter={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSendMessage();
+                  }
+                }}
+              />
+              <Button
+                type="primary"
+                icon={<SendOutlined />}
+                onClick={handleSendMessage}
+                loading={isLoading}
+                disabled={isLoading || !chatInput.trim()}
+                block
+                style={{ borderRadius: '8px' }}
+              >
+                发送
+              </Button>
+            </div>
           </div>
         )}
       </Sider>
