@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Layout, Upload, Input, Select, Button, Space, Card, Table, message, Modal, Form, Progress } from 'antd';
-import { UploadOutlined, PlusOutlined, SendOutlined, CheckCircleOutlined, FolderOpenOutlined } from '@ant-design/icons';
+import React, { useState, useEffect } from 'react';
+import { Layout, Input, Select, Button, Space, Card, message, Modal, Form, Progress } from 'antd';
+import { PlusOutlined, SendOutlined, CheckCircleOutlined, FolderOpenOutlined } from '@ant-design/icons';
 
 const { Sider, Content } = Layout;
 const API_BASE = 'http://localhost:8000/api';
@@ -200,6 +200,11 @@ const DataManagerPage = () => {
       return;
     }
 
+    if (!selectedCategory) {
+      message.error('请选择类别');
+      return;
+    }
+
     // 生成任务标题
     let taskTitle = url;
     // 尝试从URL中提取更友好的标题
@@ -214,7 +219,7 @@ const DataManagerPage = () => {
     const newTask = {
       id: generateTaskId(),
       url,
-      category: selectedCategory || '未分类',
+      category: selectedCategory,
       title: taskTitle,
       status: 'pending', // pending, processing, completed, failed
       created: new Date().toISOString()
@@ -358,31 +363,32 @@ const DataManagerPage = () => {
   };
 
   return (
-    <Layout style={{ height: '100vh' }}>
-      <Sider width="35%" theme="light" style={{ borderRight: '1px solid #f0f0f0', padding: '20px' }}>
-        <h3>数据上传与配置</h3>
-        <Space direction="vertical" style={{ width: '100%' }} size="large">
-          <Upload.Dragger name="file" multiple={false} disabled>
-            <p className="ant-upload-drag-icon"><UploadOutlined /></p>
-            <p>文件上传暂不可用</p>
-            <p>请使用URL输入</p>
-          </Upload.Dragger>
+    <Layout style={{ height: '100vh', width: '100%', display: 'flex', margin: 0, padding: 0 }}>
+      {/* 左侧数据上传面板 */}
+      <Sider width={280} theme="light" style={{ borderRight: '1px solid #f0f0f0', padding: '24px', background: '#fafafa', overflowY: 'auto' }}>
+        <div style={{ marginBottom: '24px' }}>
+          <h2 style={{ margin: '0 0 8px 0', fontSize: '20px', fontWeight: 600, color: '#262626' }}>数据上传</h2>
+          <p style={{ margin: '0', fontSize: '13px', color: '#8c8c8c' }}>支持 B站、小红书等平台</p>
+        </div>
 
+        <Space direction="vertical" style={{ width: '100%' }} size="middle">
           <div>
-            <label>输入URL地址：</label>
+            <label style={{ fontSize: '13px', fontWeight: 500, color: '#595959', display: 'block', marginBottom: '8px' }}>输入URL地址</label>
             <Input
-              placeholder="https://example.com"
+              placeholder="https://www.bbilibili.com/..."
               value={url}
               onChange={e => setUrl(e.target.value)}
-              style={{ marginTop: '8px' }}
+              size="large"
+              style={{ borderRadius: '6px' }}
             />
           </div>
 
           <div>
-            <label>指定数据库类别：</label>
+            <label style={{ fontSize: '13px', fontWeight: 500, color: '#595959', display: 'block', marginBottom: '8px' }}>指定数据库类别 <span style={{ color: '#ff4d4f' }}>*</span></label>
             <Select
-              style={{ width: '100%', marginTop: '8px' }}
-              placeholder="选择类别"
+              style={{ width: '100%' }}
+              placeholder="请选择类别"
+              size="large"
               value={selectedCategory}
               onChange={setSelectedCategory}
               options={categories.map(c => ({ label: c, value: c }))}
@@ -407,58 +413,91 @@ const DataManagerPage = () => {
             block
             size="large"
             onClick={handleStart}
+            style={{ height: '44px', borderRadius: '6px', fontSize: '15px', fontWeight: 500 }}
           >
             开始处理
           </Button>
+
+          <div style={{ height: '1px', background: '#e8e8e8', margin: '8px 0' }}></div>
+
+          <div>
+            <label style={{ fontSize: '13px', fontWeight: 500, color: '#595959', display: 'block', marginBottom: '8px' }}>知识库管理</label>
+          </div>
 
           <Button
             block
             size="large"
             icon={<FolderOpenOutlined />}
             onClick={() => setStatus('categories')}
+            style={{ height: '44px', borderRadius: '6px', fontSize: '15px', fontWeight: 500 }}
           >
             查看知识库
           </Button>
         </Space>
       </Sider>
 
-      <Layout style={{ flex: 1 }}>
-        <Content style={{ padding: '20px', background: '#fafafa', overflowY: 'auto', flex: 1 }}>
+      {/* 中间内容区域 */}
+      <Layout style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <Content style={{ padding: '32px', background: '#ffffff', overflow: 'auto', flex: 1 }}>
           {status === 'idle' && (
-            <div style={{ textAlign: 'center', marginTop: '100px' }}>
-              <p style={{ fontSize: '16px', color: '#888' }}>请在左侧输入URL以开始处理</p>
+            <div style={{ textAlign: 'center', marginTop: '120px', color: '#999' }}>
+              <div style={{ fontSize: '64px', marginBottom: '24px' }}>📚</div>
+              <p style={{ fontSize: '18px' }}>在左侧输入URL开始处理，或点击"查看知识库"浏览已有内容</p>
             </div>
           )}
 
           {status === 'processing' && (
-            <div style={{ textAlign: 'center', marginTop: '100px' }}>
-              <Card title="处理进度" style={{ maxWidth: '600px', margin: '0 auto' }}>
-                <Progress percent={progress} status="active" />
-                <p style={{ marginTop: '20px', color: '#666' }}>{progressMessage}</p>
+            <div style={{ textAlign: 'center', marginTop: '120px' }}>
+              <Card style={{ maxWidth: '500px', margin: '0 auto', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}>
+                <div style={{ fontSize: '48px', marginBottom: '24px' }}>⏳</div>
+                <Progress percent={progress} status="active" strokeColor={{ '0%': '#108ee9', '100%': '#87d068' }} />
+                <p style={{ marginTop: '20px', fontSize: '16px', color: '#666' }}>{progressMessage}</p>
               </Card>
             </div>
           )}
 
           {confirmStatus === 'confirming' && (
-            <div style={{ textAlign: 'center', marginTop: '100px' }}>
-              <Card title="确认入库进度" style={{ maxWidth: '600px', margin: '0 auto' }}>
-                <Progress percent={confirmProgress} status="active" />
-                <p style={{ marginTop: '20px', color: '#666' }}>正在将项目添加到数据库...</p>
+            <div style={{ textAlign: 'center', marginTop: '120px' }}>
+              <Card style={{ maxWidth: '500px', margin: '0 auto', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}>
+                <div style={{ fontSize: '48px', marginBottom: '24px' }}>💾</div>
+                <h3 style={{ marginBottom: '20px' }}>确认入库进度</h3>
+                <Progress percent={confirmProgress} status="active" strokeColor={{ '0%': '#108ee9', '100%': '#52c41a' }} />
+                <p style={{ marginTop: '20px', fontSize: '16px', color: '#666' }}>正在将项目添加到知识库...</p>
               </Card>
             </div>
           )}
 
           {status === 'reviewing' && currentResult && (
-            <Card title={`后端处理结果预览 (共 ${currentResult.questions?.length || 0} 个问题)`} extra={<span style={{ color: '#1890ff' }}>待确认</span>}>
-              <div style={{ marginBottom: '16px' }}>
-                <strong>类别：</strong> {currentResult.category}
+            <Card
+              title={
+                <span>
+                  <span style={{ fontSize: '18px', fontWeight: 500 }}>处理结果预览</span>
+                  <span style={{ fontSize: '14px', color: '#666', marginLeft: '12px' }}>
+                    (共 {currentResult.questions?.length || 0} 个问题)
+                  </span>
+                </span>
+              }
+              extra={<span style={{ background: '#fff7e6', color: '#fa8c16', padding: '4px 12px', borderRadius: '4px', fontSize: '14px' }}>待确认</span>}
+              style={{ boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}
+            >
+              <div style={{ marginBottom: '24px', padding: '12px', background: '#f6f8fa', borderRadius: '6px' }}>
+                <span style={{ color: '#666', fontSize: '14px' }}>类别：</span>
+                <span style={{ fontWeight: 500, marginLeft: '8px', color: '#262626' }}>{currentResult.category}</span>
               </div>
-              
-              {currentResult.questions && currentResult.questions.map((question, index) => (
-                <Card key={index} style={{ marginBottom: '16px', borderLeft: '4px solid #1890ff' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                    <div>
-                      <strong>问题 {index + 1}：</strong>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(500px, 1fr))', gap: '20px' }}>
+                {currentResult.questions && currentResult.questions.map((question, index) => (
+                  <Card
+                    key={index}
+                    style={{
+                      borderLeft: '4px solid #1890ff',
+                      boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+                      borderRadius: '6px'
+                    }}
+                  >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                    <div style={{ fontSize: '16px', fontWeight: 500, color: '#262626' }}>
+                      <span style={{ color: '#1890ff', marginRight: '8px' }}>#{index + 1}</span>
                     </div>
                     <div>
                       <input
@@ -471,35 +510,72 @@ const DataManagerPage = () => {
                             setSelectedItems(selectedItems.filter(idx => idx !== index));
                           }
                         }}
+                        style={{ cursor: 'pointer' }}
                       />
-                      <span style={{ marginLeft: '8px' }}>选择</span>
+                      <span style={{ marginLeft: '8px', fontSize: '14px', color: '#666', cursor: 'pointer', userSelect: 'none' }}>选择</span>
                     </div>
                   </div>
-                  <p style={{ marginBottom: '12px' }}>{question}</p>
-                  <div style={{ marginBottom: '8px' }}>
-                    <strong>答案：</strong>
+                  <div style={{ marginBottom: '16px', padding: '12px', background: '#fafafa', borderRadius: '4px', lineHeight: '1.6' }}>
+                    <strong style={{ color: '#595959', fontSize: '14px', display: 'block', marginBottom: '6px' }}>问题：</strong>
+                    {question}
                   </div>
-                  <pre style={{ background: '#f5f5f5', padding: '10px', marginBottom: '8px' }}>
+                  <div style={{ marginBottom: '12px' }}>
+                    <strong style={{ color: '#595959', fontSize: '14px' }}>答案：</strong>
+                  </div>
+                  <pre style={{ background: '#f6f8fa', padding: '12px', marginBottom: '12px', borderRadius: '4px', whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: '14px', lineHeight: '1.6' }}>
                     {currentResult.answers && currentResult.answers[index]}
                   </pre>
                   <div>
-                    <strong>标签：</strong> {currentResult.tags && currentResult.tags[index] ? currentResult.tags[index].join(', ') : '无'}
+                    <strong style={{ color: '#595959', fontSize: '14px' }}>标签：</strong>
+                    {currentResult.tags && currentResult.tags[index] && currentResult.tags[index].length > 0 ? (
+                      <div style={{ marginTop: '6px' }}>
+                        {currentResult.tags[index].map((tag, tagIdx) => (
+                          <span key={tagIdx} style={{
+                            display: 'inline-block',
+                            background: '#e6f7ff',
+                            color: '#096dd9',
+                            padding: '2px 8px',
+                            borderRadius: '4px',
+                            fontSize: '12px',
+                            marginRight: '6px',
+                            marginBottom: '4px'
+                          }}>
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <span style={{ color: '#999', fontSize: '14px' }}>无</span>
+                    )}
                   </div>
                 </Card>
               ))}
-              
-              <div style={{ marginTop: '20px' }}>
-                <p>如果不满意，请输入修正提示：</p>
+              </div>
+
+              <div style={{ marginTop: '24px', padding: '20px', background: '#f9f9f9', borderRadius: '8px', border: '1px solid #e8e8e8' }}>
+                <p style={{ marginBottom: '12px', fontSize: '14px', color: '#666' }}>如果不满意，请输入修正提示：</p>
                 <Input.TextArea
                   value={feedback}
                   onChange={e => setFeedback(e.target.value)}
                   placeholder="例如：请忽略第一行表头，重新提取..."
+                  rows={3}
+                  style={{ marginBottom: '12px' }}
                 />
-                <Space style={{ marginTop: '15px' }}>
-                  <Button icon={<SendOutlined />} onClick={handleCorrection} disabled={!feedback}>
+                <Space style={{ marginTop: '8px' }}>
+                  <Button
+                    icon={<SendOutlined />}
+                    onClick={handleCorrection}
+                    disabled={!feedback}
+                    style={{ minWidth: '100px' }}
+                  >
                     发送修正
                   </Button>
-                  <Button type="primary" icon={<CheckCircleOutlined />} onClick={handleConfirm}>
+                  <Button
+                    type="primary"
+                    icon={<CheckCircleOutlined />}
+                    onClick={handleConfirm}
+                    style={{ minWidth: '140px' }}
+                  >
                     {selectedItems.length > 0 ? `确认入库选中的 ${selectedItems.length} 个项目` : '确认入库所有项目'}
                   </Button>
                 </Space>
@@ -508,28 +584,39 @@ const DataManagerPage = () => {
           )}
 
           {status === 'categories' && (
-            <Card title="知识库分类" extra={<Button size="small" onClick={fetchCategories}>刷新</Button>}>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '16px' }}>
+            <Card
+              title={
+                <span>
+                  <span style={{ fontSize: '18px', fontWeight: 500 }}>知识库分类</span>
+                  <span style={{ fontSize: '14px', color: '#666', marginLeft: '12px' }}>
+                    ({categories.length} 个分类)
+                  </span>
+                </span>
+              }
+              extra={<Button size="small" onClick={fetchCategories}>刷新</Button>}
+              style={{ boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}
+            >
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '20px' }}>
                 {categories.map((category) => (
-                  <Card 
-                    key={category} 
+                  <Card
+                    key={category}
                     hoverable
                     onClick={() => {
                       setSelectedCategory(category);
                       fetchVaultDataByCategory(category);
                       setStatus('knowledgeBase');
                     }}
+                    style={{ borderRadius: '8px', textAlign: 'center', padding: '16px' }}
                   >
-                    <Card.Meta 
-                      title={category} 
-                      description="点击查看该分类下的知识"
-                    />
+                    <div style={{ fontSize: '48px', marginBottom: '12px' }}>📁</div>
+                    <div style={{ fontSize: '16px', fontWeight: 500, color: '#262626' }}>{category}</div>
+                    <div style={{ fontSize: '12px', color: '#999', marginTop: '4px' }}>点击查看内容</div>
                   </Card>
                 ))}
               </div>
-              <Button 
-                type="primary" 
-                style={{ marginTop: '16px' }} 
+              <Button
+                type="primary"
+                style={{ marginTop: '24px', minWidth: '140px', height: '40px', borderRadius: '6px' }}
                 onClick={() => {
                   setSelectedCategory('');
                   fetchVaultDataByCategory();
@@ -542,21 +629,35 @@ const DataManagerPage = () => {
           )}
 
           {status === 'knowledgeBase' && (
-            <Card 
-              title={`知识库内容 ${selectedCategory ? ` - ${selectedCategory}` : ''}`} 
+            <Card
+              title={
+                <span>
+                  <span style={{ fontSize: '18px', fontWeight: 500 }}>
+                    {selectedCategory ? `知识库 - ${selectedCategory}` : '所有知识'}
+                  </span>
+                  <span style={{ fontSize: '14px', color: '#666', marginLeft: '12px' }}>
+                    ({finalItems.length} 条记录)
+                  </span>
+                </span>
+              }
               extra={
                 <Space>
                   <Button size="small" onClick={() => fetchVaultDataByCategory(selectedCategory)}>刷新</Button>
                   <Button size="small" onClick={() => setStatus('categories')}>返回分类</Button>
                 </Space>
               }
+              style={{ boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}
             >
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(400px, 1fr))', gap: '16px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(450px, 1fr))', gap: '20px' }}>
                 {finalItems.map((item) => (
-                  <Card 
-                    key={item.id} 
+                  <Card
+                    key={item.id}
                     hoverable
-                    style={{ borderLeft: '4px solid #1890ff' }}
+                    style={{
+                      borderLeft: '4px solid #1890ff',
+                      borderRadius: '8px',
+                      boxShadow: '0 1px 3px rgba(0,0,0,0.04)'
+                    }}
                   >
                     <div style={{ cursor: 'pointer' }} onClick={() => {
                       const newExpanded = new Set(expandedCards);
@@ -567,19 +668,19 @@ const DataManagerPage = () => {
                       }
                       setExpandedCards(newExpanded);
                     }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <h4 style={{ margin: '0 0 8px 0' }}>{item.question}</h4>
-                        <span style={{ fontSize: '12px', color: '#888' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
+                        <h4 style={{ margin: '0', fontSize: '15px', lineHeight: '1.4', flex: 1, marginRight: '12px' }}>{item.question}</h4>
+                        <span style={{ fontSize: '12px', color: '#999', whiteSpace: 'nowrap' }}>
                           {new Date(item.created_at).toLocaleDateString('zh-CN')}
                         </span>
                       </div>
-                      <div style={{ fontSize: '12px', color: '#888', marginBottom: '8px' }}>
-                        类别: {item.category}
+                      <div style={{ fontSize: '12px', color: '#999', marginBottom: '8px' }}>
+                        <span style={{ background: '#f0f0f0', padding: '2px 8px', borderRadius: '4px' }}>{item.category}</span>
                       </div>
                       {expandedCards.has(item.id) && (
                         <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #f0f0f0' }}>
-                          <strong>答案：</strong>
-                          <pre style={{ background: '#f5f5f5', padding: '10px', marginTop: '8px' }}>
+                          <div style={{ fontSize: '14px', color: '#595959', marginBottom: '8px', fontWeight: 500 }}>答案：</div>
+                          <pre style={{ background: '#f6f8fa', padding: '12px', borderRadius: '4px', whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: '14px', lineHeight: '1.6', margin: 0 }}>
                             {item.answer}
                           </pre>
                         </div>
@@ -589,72 +690,88 @@ const DataManagerPage = () => {
                 ))}
               </div>
               {finalItems.length === 0 && (
-                <div style={{ textAlign: 'center', padding: '40px' }}>
-                  <p>该分类下暂无知识内容</p>
+                <div style={{ textAlign: 'center', padding: '60px 20px', color: '#999' }}>
+                  <div style={{ fontSize: '64px', marginBottom: '16px' }}>📭</div>
+                  <p style={{ fontSize: '16px' }}>该分类下暂无知识内容</p>
                 </div>
               )}
             </Card>
           )}
         </Content>
-
-        {/* 任务队列侧边栏 */}
-        <Sider width="300px" theme="light" style={{ borderLeft: '1px solid #f0f0f0', padding: '20px' }}>
-          <h3>任务队列</h3>
-          {taskQueue.length === 0 ? (
-            <p style={{ color: '#888', marginTop: '20px' }}>暂无任务</p>
-          ) : (
-            <div style={{ marginTop: '20px' }}>
-              {taskQueue.map((task) => (
-                <Card 
-                  key={task.id} 
-                  style={{
-                    marginBottom: '10px',
-                    borderLeft: task.status === 'processing' ? '4px solid #1890ff' : 
-                               task.status === 'completed' ? '4px solid #52c41a' : 
-                               task.status === 'failed' ? '4px solid #ff4d4f' : '4px solid #d9d9d9'
-                  }}
-                >
-                  <div 
-                    style={{ 
-                      fontSize: '14px', 
-                      fontWeight: 'bold', 
-                      marginBottom: '8px',
-                      cursor: task.status === 'completed' ? 'pointer' : 'default',
-                      color: task.status === 'completed' ? '#1890ff' : 'inherit'
-                    }}
-                    onClick={() => {
-                      if (task.status === 'completed') {
-                        // 找到对应的处理结果
-                        // 这里需要根据任务ID找到对应的处理结果
-                        // 由于我们没有存储任务ID和处理结果的对应关系，这里暂时不实现
-                        message.info('点击了已完成的任务');
-                      }
-                    }}
-                  >
-                    {task.title.length > 20 ? task.title.substring(0, 20) + '...' : task.title}
-                  </div>
-                  <div style={{ fontSize: '12px', color: '#888', marginBottom: '8px' }}>
-                    类别: {task.category}
-                  </div>
-                  <div style={{ fontSize: '12px', color: '#888' }}>
-                    状态: 
-                    {task.status === 'pending' && <span style={{ color: '#faad14' }}>等待中</span>}
-                    {task.status === 'processing' && <span style={{ color: '#1890ff' }}>处理中</span>}
-                    {task.status === 'completed' && <span style={{ color: '#52c41a' }}>已完成</span>}
-                    {task.status === 'failed' && <span style={{ color: '#ff4d4f' }}>失败</span>}
-                  </div>
-                  {task.error && (
-                    <div style={{ fontSize: '12px', color: '#ff4d4f', marginTop: '8px' }}>
-                      错误: {task.error.substring(0, 50)}...
-                    </div>
-                  )}
-                </Card>
-              ))}
-            </div>
-          )}
-        </Sider>
       </Layout>
 
+      {/* 右侧任务队列侧边栏 */}
+      <Sider width={280} theme="light" style={{ borderLeft: '1px solid #f0f0f0', padding: '24px', background: '#fafafa', overflowY: 'auto' }}>
+        <div style={{ marginBottom: '16px' }}>
+          <h2 style={{ margin: '0 0 8px 0', fontSize: '18px', fontWeight: 600, color: '#262626' }}>任务队列</h2>
+          <span style={{ fontSize: '12px', color: '#8c8c8c', background: '#f0f0f0', padding: '2px 8px', borderRadius: '4px' }}>
+            {taskQueue.length} 个任务
+          </span>
+        </div>
+        {taskQueue.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '40px 0', color: '#999' }}>
+            <div style={{ fontSize: '48px', marginBottom: '12px' }}>📋</div>
+            <p style={{ fontSize: '14px' }}>暂无任务</p>
+          </div>
+        ) : (
+          <div>
+            {taskQueue.map((task) => (
+              <Card
+                key={task.id}
+                size="small"
+                style={{
+                  marginBottom: '12px',
+                  borderLeft: task.status === 'processing' ? '3px solid #1890ff' :
+                             task.status === 'completed' ? '3px solid #52c41a' :
+                             task.status === 'failed' ? '3px solid #ff4d4f' : '3px solid #d9d9d9',
+                  borderRadius: '6px',
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+                  cursor: task.status === 'completed' ? 'pointer' : 'default'
+                }}
+                onClick={() => {
+                  if (task.status === 'completed') {
+                    message.info('点击了已完成的任务');
+                  }
+                }}
+              >
+                <div style={{ marginBottom: '8px' }}>
+                  <div
+                    style={{
+                      fontSize: '14px',
+                      fontWeight: 500,
+                      color: task.status === 'completed' ? '#1890ff' : '#262626',
+                      lineHeight: '1.4'
+                    }}
+                  >
+                    {task.title.length > 30 ? task.title.substring(0, 30) + '...' : task.title}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px' }}>
+                  <span style={{ color: '#8c8c8c' }}>{task.category}</span>
+                  <span style={{
+                    color: task.status === 'pending' ? '#faad14' :
+                           task.status === 'processing' ? '#1890ff' :
+                           task.status === 'completed' ? '#52c41a' : '#ff4d4f',
+                    fontWeight: 500
+                  }}>
+                    {task.status === 'pending' && '等待中'}
+                    {task.status === 'processing' && '处理中'}
+                    {task.status === 'completed' && '已完成'}
+                    {task.status === 'failed' && '失败'}
+                  </span>
+                </div>
+                {task.error && (
+                  <div style={{ fontSize: '11px', color: '#ff4d4f', marginTop: '8px', padding: '4px', background: '#fff2f0', borderRadius: '4px' }}>
+                    {task.error.length > 40 ? task.error.substring(0, 40) + '...' : task.error}
+                  </div>
+                )}
+              </Card>
+            ))}
+          </div>
+        )}
+      </Sider>
+
+      {/* 添加新类别模态框 */}
       <Modal
         title="添加新类别"
         open={addCategoryModal}
@@ -673,6 +790,7 @@ const DataManagerPage = () => {
       </Modal>
     </Layout>
   );
+
 };
 
 export default DataManagerPage;
