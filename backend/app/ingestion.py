@@ -17,8 +17,8 @@ import re
 from bs4 import BeautifulSoup
 from biliSub.enhanced_bilisub import BiliSubDownloader
 from dotenv import load_dotenv
-from .utils import read_srt
-from .deps import get_xhs_instance, get_qa_router_instance
+from .utils import read_srt, list_dir
+from .deps import get_xhs_instance, get_qa_router_instance, get_ocr_client
 load_dotenv()
 
 # Models for PydanticOutputParser
@@ -58,7 +58,7 @@ async def extract_text_from_file(file: UploadFile) -> str:
     else:
         return content.decode("utf-8", errors="ignore")
         
-async def extract_text_from_url(url: str) -> tuple[bool, str]:
+async def extract_text_from_url(url: str, extract_mode: str = "text_and_images") -> tuple[bool, str]:
     if "bilibili" in url:
         # print("正在解析视频URL...")
         tasks = bilibili_sub_downloader.parse_input(url)
@@ -83,6 +83,10 @@ async def extract_text_from_url(url: str) -> tuple[bool, str]:
     elif "xiaohongshu" in url:
         xhs_client = await get_xhs_instance()
         xhs_result = await xhs_client.extract(url, True)
+        if extract_mode == "text_and_images":
+            image_ocr_text = await get_ocr_client().batch_parse_files(list_dir(xhs_result[0]["作者ID"]))
+            image_ocr_text = "\n".join([item["content"] for item in image_ocr_text.values()])
+            return True, xhs_result[0]["作品描述"] + image_ocr_text.strip().replace(' ', '')
         return True, xhs_result[0]["作品描述"]
     else:
         return False, "Unsupported URL type."
@@ -145,7 +149,14 @@ async def _refine_content_with_llm(text: str, feedback: str = None) -> Optional[
         print(f"Error in LLM refinement: {str(e)}")
         return None
 
-async def process_content(file: Optional[UploadFile] = None, url: Optional[str] = None, category: str = "未分类", progress_callback=None):
+async def process_content(
+    file: Optional[UploadFile] = None,
+    url: Optional[str] = None,
+    raw_text: Optional[str] = None,
+    category: str = "未分类",
+    extract_mode: str = "text_and_images",
+    progress_callback=None,
+):
     """
     Process content from file or URL and return structured data for review.
     """
@@ -163,11 +174,15 @@ async def process_content(file: Optional[UploadFile] = None, url: Optional[str] 
         elif url:
             if progress_callback:
                 progress_callback(20, "从URL中提取文本")
-            success, text = await extract_text_from_url(url)
+            success, text = await extract_text_from_url(url, extract_mode)
             if not success:
                 if progress_callback:
                     progress_callback(100, "处理失败")
                 return {"error": text}
+        elif raw_text is not None:
+            if progress_callback:
+                progress_callback(20, "处理粘贴文本")
+            text = raw_text
 
         if not text:
             if progress_callback:

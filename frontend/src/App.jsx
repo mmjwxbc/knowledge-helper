@@ -13,7 +13,9 @@ const DataManagerPage = () => {
   const [feedback, setFeedback] = useState('');
   const [finalItems, setFinalItems] = useState([]);
   const [status, setStatus] = useState('idle'); // idle, processing, reviewing, categories, knowledgeBase
+  const [inputMode, setInputMode] = useState('url');
   const [url, setUrl] = useState('');
+  const [pastedText, setPastedText] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('');
   const [addCategoryModal, setAddCategoryModal] = useState(false);
   const [selectedItems, setSelectedItems] = useState([]);
@@ -25,6 +27,7 @@ const DataManagerPage = () => {
   const [currentTaskId, setCurrentTaskId] = useState(null);
   const [deleteModalVisible, setDeleteModalVisible] = useState(false);
   const [itemToDelete, setItemToDelete] = useState(null);
+  const [extractMode, setExtractMode] = useState('text_and_images'); // text_and_images, text_only
   
   // 聊天功能状态
   const [chatMessages, setChatMessages] = useState([]);
@@ -32,7 +35,7 @@ const DataManagerPage = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [selectedChatCategory, setSelectedChatCategory] = useState('');
   const [showChatSidebar, setShowChatSidebar] = useState(false);
-  const [sidebarWidth, setSidebarWidth] = useState(280);
+  const [sidebarWidth, setSidebarWidth] = useState(350);
   const [isResizing, setIsResizing] = useState(false);
   const messagesEndRef = useRef(null);
   const sidebarRef = useRef(null);
@@ -124,13 +127,18 @@ const DataManagerPage = () => {
 
     setStatus('processing');
     setProgress(0);
-    setProgressMessage('开始处理URL');
+    setProgressMessage(task.sourceType === 'text' ? '开始处理文本' : '开始处理URL');
     
     try {
       const response = await fetch(`${API_BASE}/process`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: task.url, category: task.category || '未分类' }),
+        body: JSON.stringify({ 
+          url: task.url,
+          text: task.text,
+          category: task.category || '未分类',
+          extract_mode: task.extract_mode || 'text_and_images'
+        }),
       });
 
       if (!response.ok) {
@@ -235,8 +243,16 @@ const DataManagerPage = () => {
 
   // 开始处理URL
   const handleStart = () => {
-    if (!url) {
+    const trimmedUrl = url.trim();
+    const trimmedText = pastedText.trim();
+
+    if (inputMode === 'url' && !trimmedUrl) {
       message.error('请输入URL地址');
+      return;
+    }
+
+    if (inputMode === 'text' && !trimmedText) {
+      message.error('请输入要上传的笔记文本');
       return;
     }
 
@@ -246,20 +262,27 @@ const DataManagerPage = () => {
     }
 
     // 生成任务标题
-    let taskTitle = url;
-    // 尝试从URL中提取更友好的标题
-    try {
-      const urlObj = new URL(url);
-      taskTitle = urlObj.hostname + urlObj.pathname;
-    } catch (e) {
-      // 无效URL，使用原始值
+    let taskTitle = trimmedUrl;
+    if (inputMode === 'url') {
+      // 尝试从URL中提取更友好的标题
+      try {
+        const urlObj = new URL(trimmedUrl);
+        taskTitle = urlObj.hostname + urlObj.pathname;
+      } catch (e) {
+        // 无效URL，使用原始值
+      }
+    } else {
+      taskTitle = trimmedText.split('\n')[0].slice(0, 40) || '粘贴文本';
     }
 
     // 创建新任务
     const newTask = {
       id: generateTaskId(),
-      url,
+      sourceType: inputMode,
+      url: inputMode === 'url' ? trimmedUrl : '',
+      text: inputMode === 'text' ? trimmedText : '',
       category: selectedCategory,
+      extract_mode: extractMode,
       title: taskTitle,
       status: 'pending', // pending, processing, completed, failed
       created: new Date().toISOString()
@@ -277,6 +300,7 @@ const DataManagerPage = () => {
 
     // 清空输入
     setUrl('');
+    setPastedText('');
     setSelectedCategory('');
   };
 
@@ -483,12 +507,12 @@ const DataManagerPage = () => {
 
   useEffect(() => {
     const handleMouseMove = (e) => {
-      if (!isResizing) return;
-      
+      if (!isResizing || !sidebarRef.current) return;
+
       const sidebarRect = sidebarRef.current.getBoundingClientRect();
-      const newWidth = e.clientX - sidebarRect.left;
-      
-      if (newWidth > 200 && newWidth < 500) {
+      const newWidth = sidebarRect.right - e.clientX;
+
+      if (newWidth > 250 && newWidth < 800) {
         setSidebarWidth(newWidth);
       }
     };
@@ -506,25 +530,58 @@ const DataManagerPage = () => {
     };
   }, [isResizing]);
 
+  // 自动滚动到消息底部
+  useEffect(() => {
+    if (messagesEndRef.current && messagesEndRef.current.scrollTop !== undefined) {
+      messagesEndRef.current.scrollTop = messagesEndRef.current.scrollHeight;
+    }
+  }, [chatMessages]);
+
   return (
     <Layout style={{ height: '100vh', width: '100%', display: 'flex', margin: 0, padding: 0 }}>
       {/* 左侧数据上传面板 */}
       <Sider width={280} theme="light" style={{ borderRight: '1px solid #f0f0f0', padding: '24px', background: '#fafafa', overflowY: 'auto', flexShrink: 0 }}>
         <div style={{ marginBottom: '24px' }}>
           <h2 style={{ margin: '0 0 8px 0', fontSize: '20px', fontWeight: 600, color: '#262626' }}>数据上传</h2>
-          <p style={{ margin: '0', fontSize: '13px', color: '#8c8c8c' }}>支持 B站、小红书等平台</p>
+          <p style={{ margin: '0', fontSize: '13px', color: '#8c8c8c' }}>支持 URL 抓取，也支持直接粘贴笔记文本</p>
         </div>
 
         <Space orientation="vertical" style={{ width: '100%' }} size="middle">
           <div>
-            <label style={{ fontSize: '13px', fontWeight: 500, color: '#595959', display: 'block', marginBottom: '8px' }}>输入URL地址</label>
-            <Input
-              placeholder="https://www.bbilibili.com/..."
-              value={url}
-              onChange={e => setUrl(e.target.value)}
+            <label style={{ fontSize: '13px', fontWeight: 500, color: '#595959', display: 'block', marginBottom: '8px' }}>输入来源</label>
+            <Select
+              style={{ width: '100%' }}
               size="large"
-              style={{ borderRadius: '6px' }}
+              value={inputMode}
+              onChange={setInputMode}
+              options={[
+                { label: 'URL 链接', value: 'url' },
+                { label: '粘贴文本', value: 'text' }
+              ]}
             />
+          </div>
+
+          <div>
+            <label style={{ fontSize: '13px', fontWeight: 500, color: '#595959', display: 'block', marginBottom: '8px' }}>
+              {inputMode === 'url' ? '输入URL地址' : '粘贴笔记文本'}
+            </label>
+            {inputMode === 'url' ? (
+              <Input
+                placeholder="https://www.bilibili.com/..."
+                value={url}
+                onChange={e => setUrl(e.target.value)}
+                size="large"
+                style={{ borderRadius: '6px' }}
+              />
+            ) : (
+              <Input.TextArea
+                placeholder="直接粘贴你的笔记、摘要、会议记录或其他文本内容"
+                value={pastedText}
+                onChange={e => setPastedText(e.target.value)}
+                rows={8}
+                style={{ borderRadius: '6px', resize: 'vertical' }}
+              />
+            )}
           </div>
 
           <div>
@@ -549,6 +606,20 @@ const DataManagerPage = () => {
                   </Button>
                 </>
               )}
+            />
+          </div>
+
+          <div>
+            <label style={{ fontSize: '13px', fontWeight: 500, color: '#595959', display: 'block', marginBottom: '8px' }}>提取模式</label>
+            <Select
+              style={{ width: '100%' }}
+              size="large"
+              value={extractMode}
+              onChange={setExtractMode}
+              options={[
+                { label: '提取图文', value: 'text_and_images' },
+                { label: '只提取文字', value: 'text_only' }
+              ]}
             />
           </div>
 
@@ -592,11 +663,11 @@ const DataManagerPage = () => {
 
       {/* 中间内容区域 */}
       <Layout style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
-        <Content style={{ padding: '32px', background: '#ffffff', overflow: 'auto', flex: 1 }}>
+        <Content style={{ padding: '32px', background: '#ffffff', overflow: 'auto', flex: 1, minWidth: 0 }}>
           {status === 'idle' && (
             <div style={{ textAlign: 'center', marginTop: '120px', color: '#999' }}>
               <div style={{ fontSize: '64px', marginBottom: '24px' }}>📚</div>
-              <p style={{ fontSize: '18px' }}>在左侧输入URL开始处理，或点击"查看知识库"浏览已有内容</p>
+              <p style={{ fontSize: '18px' }}>在左侧输入 URL 或粘贴文本开始处理，或点击"查看知识库"浏览已有内容</p>
             </div>
           )}
 
@@ -876,34 +947,32 @@ const DataManagerPage = () => {
         </Content>
       </Layout>
 
+      {/* Resize handle 放在中间内容和侧边栏之间 */}
+      <div
+        style={{
+          width: '8px',
+          cursor: isResizing ? 'col-resize' : 'ew-resize',
+          backgroundColor: isResizing ? '#1890ff' : '#e8e8e8',
+          flexShrink: 0,
+          transition: 'background-color 0.2s ease'
+        }}
+        onMouseDown={handleMouseDown}
+      />
+
       {/* 右侧任务队列和聊天侧边栏 */}
-      <Sider 
-        width={sidebarWidth} 
-        theme="light" 
-        style={{ 
-          borderLeft: '1px solid #f0f0f0', 
-          background: '#fafafa', 
+      <div
+        style={{
+          width: sidebarWidth,
+          background: '#fafafa',
           overflowY: 'auto',
-          position: 'relative',
-          flexShrink: 0
+          flexShrink: 0,
+          borderLeft: '1px solid #f0f0f0',
+          display: 'flex',
+          flexDirection: 'column'
         }}
         ref={sidebarRef}
       >
-        {/*  resize handle */}
-        <div 
-          style={{
-            position: 'absolute',
-            left: 0,
-            top: 0,
-            bottom: 0,
-            width: '5px',
-            cursor: isResizing ? 'col-resize' : 'ew-resize',
-            backgroundColor: isResizing ? '#1890ff' : 'transparent',
-            zIndex: 10
-          }}
-          onMouseDown={handleMouseDown}
-        />
-        <div style={{ marginLeft: '5px' }}>
+        <div style={{ padding: '0', flex: 1 }}>
         {!showChatSidebar ? (
           <div style={{ padding: '24px' }}>
             <div style={{ marginBottom: '16px' }}>
@@ -975,22 +1044,23 @@ const DataManagerPage = () => {
             )}
           </div>
         ) : (
-          <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
-            <div style={{ padding: '24px', borderBottom: '1px solid #e8e8e8' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+          <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            <div style={{ padding: '20px 24px', borderBottom: '1px solid #e8e8e8', background: '#fafafa', flexShrink: 0 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
                 <h2 style={{ margin: '0', fontSize: '18px', fontWeight: 600, color: '#262626' }}>对话助手</h2>
                 <Button size="small" onClick={() => setShowChatSidebar(false)}>关闭</Button>
               </div>
               <p style={{ margin: '0', fontSize: '13px', color: '#8c8c8c' }}>基于知识库的智能问答</p>
             </div>
-            
+
             {/* 聊天消息区域 */}
-            <div 
-              style={{ 
-                flex: 1, 
-                overflowY: 'auto', 
-                padding: '16px', 
-                background: '#fafafa'
+            <div
+              style={{
+                flex: 1,
+                overflowY: 'auto',
+                padding: '20px 24px',
+                background: '#fafafa',
+                minHeight: 0
               }}
               ref={messagesEndRef}
             >
@@ -1002,26 +1072,28 @@ const DataManagerPage = () => {
                 </div>
               ) : (
                 chatMessages.map((message) => (
-                  <div 
-                    key={message.id} 
+                  <div
+                    key={message.id}
                     style={{
                       display: 'flex',
-                      marginBottom: '16px',
+                      marginBottom: '20px',
                       justifyContent: message.type === 'user' ? 'flex-end' : 'flex-start'
                     }}
                   >
                     <div style={{ display: 'flex', alignItems: 'flex-start' }}>
                       {message.type === 'ai' && (
-                            <QuestionCircleOutlined style={{ fontSize: '18px', color: '#1890ff', marginRight: '8px', marginTop: '2px' }} />
-                          )}
-                      <div 
+                        <QuestionCircleOutlined style={{ fontSize: '18px', color: '#1890ff', marginRight: '8px', marginTop: '2px' }} />
+                      )}
+                      <div
                         style={{
-                          maxWidth: '70%',
+                          maxWidth: '100%',
                           padding: '12px 16px',
                           borderRadius: '16px',
                           backgroundColor: message.type === 'user' ? '#1890ff' : '#ffffff',
                           color: message.type === 'user' ? '#ffffff' : '#333333',
-                          boxShadow: '0 1px 2px rgba(0,0,0,0.1)'
+                          boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
+                          wordBreak: 'break-word',
+                          overflowWrap: 'break-word'
                         }}
                       >
                         {message.loading ? (
@@ -1049,13 +1121,13 @@ const DataManagerPage = () => {
             </div>
 
             {/* 输入区域 */}
-            <div style={{ padding: '16px', borderTop: '1px solid #e8e8e8', background: '#ffffff' }}>
+            <div style={{ padding: '16px 24px', borderTop: '1px solid #e8e8e8', background: '#ffffff', flexShrink: 0 }}>
               <Input.TextArea
                 value={chatInput}
                 onChange={e => setChatInput(e.target.value)}
                 placeholder="输入你的问题..."
                 rows={2}
-                style={{ 
+                style={{
                   marginBottom: '12px',
                   resize: 'none',
                   borderRadius: '8px'
@@ -1082,7 +1154,7 @@ const DataManagerPage = () => {
           </div>
         )}
         </div>
-      </Sider>
+      </div>
 
       {/* 添加新类别模态框 */}
       <Modal

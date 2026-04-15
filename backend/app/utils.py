@@ -1,6 +1,8 @@
 import srt
 import yaml
 from xhs_downloader.application.app import XHS
+import os
+
 def read_srt(content):        
     subtitles = list(srt.parse(content))
     
@@ -21,3 +23,9 @@ class XHSClientManager:
 async def init_xhs():
     config_params = XHSClientManager.get_config("/home/jhli/knowledge-helper/config/xhs.yaml")    
     return XHS(**config_params)
+
+
+def list_dir(id: str):
+    # flat absolute path
+    directory = os.path.abspath(os.path.join("/home/jhli/knowledge-helper/output/xhs/download", id, id))
+    return [os.path.join(directory, item) for item in os.listdir(directory)]

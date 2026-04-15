@@ -4,10 +4,13 @@ from workflow.qa_router import QARouter
 from langchain_deepseek import ChatDeepSeek
 from langchain_openai import ChatOpenAI
 import yaml
+from mineru_ocr import MinerUAgentAsyncClient
 
 xhs_client: XHS = None
 llm: ChatDeepSeek = None
 qa_router: QARouter = None
+ocr_client: MinerUAgentAsyncClient = None
+
 
 
 async def get_xhs_instance():
@@ -36,3 +39,10 @@ async def get_qa_router_instance():
     if qa_router is None:
         qa_router = QARouter(llm=await get_llm_instance())
     return qa_router
+
+
+def get_ocr_client():
+    global ocr_client
+    if ocr_client is None:
+            ocr_client = MinerUAgentAsyncClient()
+    return ocr_client

@@ -52,9 +52,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-class URLInput(BaseModel):
-    url: str
+class ProcessInput(BaseModel):
+    url: Optional[str] = None
+    text: Optional[str] = None
     category: Optional[str] = None
+    extract_mode: Optional[str] = None
 
 class CorrectInput(BaseModel):
     id: str
@@ -97,12 +99,15 @@ async def add_category_endpoint(category_data: dict):
 
 # Content Processing Endpoints
 @app.post("/api/process")
-async def process_url(input: URLInput):
+async def process_url(input: ProcessInput):
     """
-    Process URL and return structured data for review with progress updates.
+    Process URL or pasted text and return structured data for review with progress updates.
     """
-    if not input.url:
-        raise HTTPException(status_code=400, detail="URL is required")
+    input_url = input.url.strip() if input.url else None
+    input_text = input.text.strip() if input.text else None
+
+    if not input_url and not input_text:
+        raise HTTPException(status_code=400, detail="URL or text is required")
 
     from fastapi.responses import StreamingResponse
     import json
@@ -114,11 +119,13 @@ async def process_url(input: URLInput):
     # Create task object
     task = {
         "id": task_id,
-        "url": input.url,
+        "url": input_url,
+        "text": input_text,
+        "source_type": "text" if input_text else "url",
         "category": input.category or "未分类",
         "status": "processing",
         "progress": 0,
-        "message": "开始处理URL",
+        "message": "开始处理文本" if input_text else "开始处理URL",
         "created": datetime.now().isoformat(),
         "updated": datetime.now().isoformat()
     }
@@ -142,8 +149,10 @@ async def process_url(input: URLInput):
         try:
             # Process content with progress callback
             result = await process_content(
-                url=input.url, 
+                url=input_url,
+                raw_text=input_text,
                 category=input.category or "未分类",
+                extract_mode=input.extract_mode or "text_and_images",
                 progress_callback=progress_callback
             )
             log("完成process url")
@@ -172,7 +181,8 @@ async def process_url(input: URLInput):
     async def event_generator():
         """Generate SSE events from the progress queue"""
         # Send initial progress
-        yield f"data: {json.dumps({'status': 'processing', 'progress': 0, 'message': '开始处理URL'})}\n\n"
+        initial_message = "开始处理文本" if input_text else "开始处理URL"
+        yield f"data: {json.dumps({'status': 'processing', 'progress': 0, 'message': initial_message})}\n\n"
 
         # Listen for progress updates
         while True:
