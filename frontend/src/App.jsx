@@ -1,25 +1,120 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Layout, Input, Select, Button, Space, Card, message, Modal, Form, Progress, Popconfirm, Typography, Spin } from 'antd';
-import { PlusOutlined, SendOutlined, CheckCircleOutlined, FolderOpenOutlined, DeleteOutlined, MessageOutlined, QuestionCircleOutlined, UserOutlined, LoadingOutlined } from '@ant-design/icons';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  Button,
+  Card,
+  Form,
+  Input,
+  Layout,
+  Modal,
+  Popconfirm,
+  Progress,
+  Select,
+  Space,
+  Spin,
+  Typography,
+  message,
+} from 'antd';
+import {
+  CheckCircleOutlined,
+  DeleteOutlined,
+  FolderOpenOutlined,
+  LoadingOutlined,
+  MessageOutlined,
+  PlusOutlined,
+  QuestionCircleOutlined,
+  SendOutlined,
+  UserOutlined,
+} from '@ant-design/icons';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import './App.css';
 
 const { Sider, Content } = Layout;
+const { TextArea } = Input;
+
 const API_BASE = 'http://localhost:8000/api';
-const generateChatConversationId = () => `chat_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+
+const generateChatConversationId = () =>
+  `chat_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+
 const buildConversationTitle = (messages) => {
-  const firstUserMessage = (messages || []).find((msg) => msg.type === 'user' && msg.content?.trim());
+  const firstUserMessage = (messages || []).find(
+    (msg) => msg.type === 'user' && msg.content?.trim(),
+  );
   if (!firstUserMessage) return '新对话';
   return firstUserMessage.content.trim().slice(0, 30) || '新对话';
 };
 
-const DataManagerPage = () => {
+const normalizeTagList = (tags) =>
+  Array.from(
+    new Set(
+      (tags || [])
+        .map((tag) => (typeof tag === 'string' ? tag.trim() : ''))
+        .filter(Boolean),
+    ),
+  );
+
+const cx = (...parts) => parts.filter(Boolean).join(' ');
+
+const STATUS_META = {
+  idle: { label: '待开始', tone: 'neutral' },
+  processing: { label: '处理中', tone: 'info' },
+  reviewing: { label: '待确认', tone: 'warning' },
+  categories: { label: '分类视图', tone: 'neutral' },
+  knowledgeBase: { label: '知识库', tone: 'success' },
+};
+
+const TASK_STATUS_META = {
+  pending: '等待中',
+  processing: '处理中',
+  completed: '已完成',
+  failed: '失败',
+};
+
+function StatusPill({ children, tone = 'neutral' }) {
+  return <span className={cx('status-pill', `status-pill-${tone}`)}>{children}</span>;
+}
+
+function SectionIntro({ eyebrow, title, description, aside }) {
+  return (
+    <div className="section-intro">
+      <div>
+        {eyebrow ? <div className="section-eyebrow">{eyebrow}</div> : null}
+        <h1 className="section-title">{title}</h1>
+        {description ? <p className="section-description">{description}</p> : null}
+      </div>
+      {aside ? <div className="section-aside">{aside}</div> : null}
+    </div>
+  );
+}
+
+function EmptyState({ icon, title, description, compact = false }) {
+  return (
+    <div className={cx('empty-state', compact && 'empty-state-compact')}>
+      <div className="empty-icon">{icon}</div>
+      <div className="empty-title">{title}</div>
+      {description ? <p className="empty-description">{description}</p> : null}
+    </div>
+  );
+}
+
+function StatCard({ label, value, hint }) {
+  return (
+    <div className="stat-card">
+      <div className="stat-label">{label}</div>
+      <div className="stat-value">{value}</div>
+      <div className="stat-hint">{hint}</div>
+    </div>
+  );
+}
+
+function App() {
   const [categories, setCategories] = useState([]);
   const [reviewTagOptions, setReviewTagOptions] = useState([]);
   const [currentResult, setCurrentResult] = useState(null);
   const [feedback, setFeedback] = useState('');
   const [finalItems, setFinalItems] = useState([]);
-  const [status, setStatus] = useState('idle'); // idle, processing, reviewing, categories, knowledgeBase
+  const [status, setStatus] = useState('idle');
   const [inputMode, setInputMode] = useState('url');
   const [url, setUrl] = useState('');
   const [pastedText, setPastedText] = useState('');
@@ -29,15 +124,12 @@ const DataManagerPage = () => {
   const [form] = Form.useForm();
   const [expandedCards, setExpandedCards] = useState(new Set());
   const [confirmProgress, setConfirmProgress] = useState(0);
-  const [confirmStatus, setConfirmStatus] = useState('idle'); // idle, confirming
+  const [confirmStatus, setConfirmStatus] = useState('idle');
   const [taskQueue, setTaskQueue] = useState([]);
   const [currentTaskId, setCurrentTaskId] = useState(null);
-  const [deleteModalVisible, setDeleteModalVisible] = useState(false);
-  const [itemToDelete, setItemToDelete] = useState(null);
-  const [extractMode, setExtractMode] = useState('text_and_images'); // text_and_images, text_only
+  const [extractMode, setExtractMode] = useState('text_and_images');
   const [editedTags, setEditedTags] = useState({});
-  
-  // 聊天功能状态
+
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -47,15 +139,20 @@ const DataManagerPage = () => {
   const [selectedChatTags, setSelectedChatTags] = useState([]);
   const [chatTagOptions, setChatTagOptions] = useState([]);
   const [showChatSidebar, setShowChatSidebar] = useState(false);
-  const [sidebarWidth, setSidebarWidth] = useState(350);
+  const [sidebarWidth, setSidebarWidth] = useState(380);
   const [isResizing, setIsResizing] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [progressMessage, setProgressMessage] = useState('');
+
   const messagesEndRef = useRef(null);
   const sidebarRef = useRef(null);
 
-  // 获取数据库类别
   useEffect(() => {
     fetchCategories();
     fetchTagsForReview();
+  }, []);
+
+  useEffect(() => {
     fetchChatConversations();
   }, []);
 
@@ -78,13 +175,41 @@ const DataManagerPage = () => {
     saveChatConversation(currentChatId, chatMessages, selectedChatCategory, selectedChatTags);
   }, [chatMessages, currentChatId, selectedChatCategory, selectedChatTags, isLoading]);
 
-  // 获取知识库数据（根据类别）
+  useEffect(() => {
+    const handleMouseMove = (e) => {
+      if (!isResizing || !sidebarRef.current) return;
+      const sidebarRect = sidebarRef.current.getBoundingClientRect();
+      const newWidth = sidebarRect.right - e.clientX;
+      if (newWidth > 280 && newWidth < 760) {
+        setSidebarWidth(newWidth);
+      }
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isResizing]);
+
+  useEffect(() => {
+    if (messagesEndRef.current?.scrollTop !== undefined) {
+      messagesEndRef.current.scrollTop = messagesEndRef.current.scrollHeight;
+    }
+  }, [chatMessages]);
+
   const fetchVaultDataByCategory = async (category = null) => {
     try {
-      const url = category 
-        ? `${API_BASE}/vault?category=${encodeURIComponent(category)}` 
+      const targetUrl = category
+        ? `${API_BASE}/vault?category=${encodeURIComponent(category)}`
         : `${API_BASE}/vault`;
-      const response = await fetch(url);
+      const response = await fetch(targetUrl);
       const data = await response.json();
       if (data.items) {
         setFinalItems(data.items);
@@ -108,10 +233,10 @@ const DataManagerPage = () => {
 
   const fetchTagsForReview = async (category = null) => {
     try {
-      const url = category
+      const targetUrl = category
         ? `${API_BASE}/tags?category=${encodeURIComponent(category)}`
         : `${API_BASE}/tags`;
-      const response = await fetch(url);
+      const response = await fetch(targetUrl);
       const data = await response.json();
       if (data.tags) {
         setReviewTagOptions(data.tags);
@@ -123,10 +248,10 @@ const DataManagerPage = () => {
 
   const fetchTagsForChat = async (category = null) => {
     try {
-      const url = category
+      const targetUrl = category
         ? `${API_BASE}/tags?category=${encodeURIComponent(category)}`
         : `${API_BASE}/tags`;
-      const response = await fetch(url);
+      const response = await fetch(targetUrl);
       const data = await response.json();
       if (data.tags) {
         setChatTagOptions(data.tags);
@@ -136,7 +261,23 @@ const DataManagerPage = () => {
     }
   };
 
-  const fetchChatConversations = async () => {
+  const loadChatConversation = useCallback(async (conversationId) => {
+    try {
+      const response = await fetch(`${API_BASE}/chat/conversations/${conversationId}`);
+      if (!response.ok) throw new Error('加载会话失败');
+      const data = await response.json();
+      setCurrentChatId(data.id);
+      setChatMessages(data.messages || []);
+      setSelectedChatCategory(data.category || '');
+      setSelectedChatTags(data.tags || []);
+      setShowChatSidebar(true);
+    } catch (error) {
+      console.error('Failed to load chat conversation:', error);
+      message.error('加载会话失败');
+    }
+  }, []);
+
+  const fetchChatConversations = useCallback(async () => {
     try {
       const response = await fetch(`${API_BASE}/chat/conversations`);
       const data = await response.json();
@@ -149,36 +290,18 @@ const DataManagerPage = () => {
     } catch (error) {
       console.error('Failed to fetch chat conversations:', error);
     }
-  };
+  }, [currentChatId, loadChatConversation]);
 
-  const loadChatConversation = async (conversationId) => {
-    try {
-      const response = await fetch(`${API_BASE}/chat/conversations/${conversationId}`);
-      if (!response.ok) {
-        throw new Error('加载会话失败');
-      }
-      const data = await response.json();
-      setCurrentChatId(data.id);
-      setChatMessages(data.messages || []);
-      setSelectedChatCategory(data.category || '');
-      setSelectedChatTags(data.tags || []);
-      setShowChatSidebar(true);
-    } catch (error) {
-      console.error('Failed to load chat conversation:', error);
-      message.error('加载会话失败');
-    }
-  };
-
-  const saveChatConversation = async (conversationId, messages, category = '', tags = []) => {
-    if (!conversationId || !messages || messages.length === 0) return;
+  const saveChatConversation = async (conversationId, messagesToSave, category = '', tags = []) => {
+    if (!conversationId || !messagesToSave || messagesToSave.length === 0) return;
     try {
       const response = await fetch(`${API_BASE}/chat/conversations`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           id: conversationId,
-          title: buildConversationTitle(messages),
-          messages,
+          title: buildConversationTitle(messagesToSave),
+          messages: messagesToSave,
           category: category || null,
           tags,
         }),
@@ -209,18 +332,20 @@ const DataManagerPage = () => {
         method: 'DELETE',
       });
       const data = await response.json();
-      if (data.success) {
-        const remainingConversations = chatConversations.filter((item) => item.id !== conversationId);
-        setChatConversations(remainingConversations);
-        if (currentChatId === conversationId) {
-          if (remainingConversations.length > 0) {
-            await loadChatConversation(remainingConversations[0].id);
-          } else {
-            handleNewConversation();
-          }
-        }
-      } else {
+      if (!data.success) {
         message.error('删除会话失败');
+        return;
+      }
+
+      const remainingConversations = chatConversations.filter((item) => item.id !== conversationId);
+      setChatConversations(remainingConversations);
+
+      if (currentChatId === conversationId) {
+        if (remainingConversations.length > 0) {
+          await loadChatConversation(remainingConversations[0].id);
+        } else {
+          handleNewConversation();
+        }
       }
     } catch (error) {
       console.error('Failed to delete conversation:', error);
@@ -228,45 +353,27 @@ const DataManagerPage = () => {
     }
   };
 
-  const normalizeTagList = (tags) => Array.from(new Set(
-    (tags || [])
-      .map(tag => (typeof tag === 'string' ? tag.trim() : ''))
-      .filter(Boolean)
-  ));
-
   const getCurrentTagsForIndex = (index) => editedTags[index] || currentResult?.tags?.[index] || [];
 
   const updateEditableTag = (index, tagIndex, value) => {
     const nextTags = [...getCurrentTagsForIndex(index)];
     nextTags[tagIndex] = value;
-    setEditedTags(prev => ({
-      ...prev,
-      [index]: nextTags
-    }));
+    setEditedTags((prev) => ({ ...prev, [index]: nextTags }));
   };
 
   const removeEditableTag = (index, tagIndex) => {
     const nextTags = getCurrentTagsForIndex(index).filter((_, idx) => idx !== tagIndex);
-    setEditedTags(prev => ({
-      ...prev,
-      [index]: nextTags
-    }));
+    setEditedTags((prev) => ({ ...prev, [index]: nextTags }));
   };
 
   const addEditableTag = (index, initialValue = '') => {
     const nextTags = [...getCurrentTagsForIndex(index), initialValue];
-    setEditedTags(prev => ({
-      ...prev,
-      [index]: nextTags
-    }));
+    setEditedTags((prev) => ({ ...prev, [index]: nextTags }));
   };
 
   const applySuggestedTag = (index, tag) => {
     const nextTags = normalizeTagList([...getCurrentTagsForIndex(index), tag]);
-    setEditedTags(prev => ({
-      ...prev,
-      [index]: nextTags
-    }));
+    setEditedTags((prev) => ({ ...prev, [index]: nextTags }));
   };
 
   const knowledgeTagStats = finalItems.reduce((acc, item) => {
@@ -286,7 +393,6 @@ const DataManagerPage = () => {
     await fetchVaultDataByCategory();
   };
 
-  // Delete vault item
   const handleDeleteItem = async (itemId) => {
     try {
       const response = await fetch(`${API_BASE}/vault/delete`, {
@@ -307,18 +413,11 @@ const DataManagerPage = () => {
     }
   };
 
-  // 开始处理URL
-  const [progress, setProgress] = useState(0);
-  const [progressMessage, setProgressMessage] = useState('');
+  const generateTaskId = () =>
+    Date.now().toString(36) + Math.random().toString(36).slice(2);
 
-  // 生成任务ID
-  const generateTaskId = () => {
-    return Date.now().toString(36) + Math.random().toString(36).substr(2);
-  };
-
-  // 处理队列中的任务
   const processNextTask = () => {
-    const nextTask = taskQueue.find(task => task.status === 'pending');
+    const nextTask = taskQueue.find((task) => task.status === 'pending');
     if (nextTask) {
       setCurrentTaskId(nextTask.id);
       processTask(nextTask);
@@ -327,108 +426,101 @@ const DataManagerPage = () => {
     }
   };
 
-  // 处理单个任务
   const processTask = async (task) => {
-    // 更新任务状态为处理中
-    setTaskQueue(prev => prev.map(t => 
-      t.id === task.id ? { ...t, status: 'processing' } : t
-    ));
+    setTaskQueue((prev) =>
+      prev.map((item) => (item.id === task.id ? { ...item, status: 'processing' } : item)),
+    );
 
     setStatus('processing');
     setProgress(0);
-    setProgressMessage(task.sourceType === 'text' ? '开始处理文本' : '开始处理URL');
-    
+    setProgressMessage(task.sourceType === 'text' ? '开始处理文本' : '开始处理 URL');
+
     try {
       const response = await fetch(`${API_BASE}/process`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           url: task.url,
           text: task.text,
           category: task.category || '未分类',
-          extract_mode: task.extract_mode || 'text_and_images'
+          extract_mode: task.extract_mode || 'text_and_images',
         }),
       });
 
-      if (!response.ok) {
-        throw new Error('网络响应错误');
-      }
+      if (!response.ok) throw new Error('网络响应错误');
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
-
       let buffer = '';
       let done = false;
       let timeoutId;
-      
-      // 设置超时处理
+
       const timeoutPromise = new Promise((_, reject) => {
-        timeoutId = setTimeout(() => {
-          reject(new Error('处理超时'));
-        }, 300000); // 2分钟超时
+        timeoutId = setTimeout(() => reject(new Error('处理超时')), 300000);
       });
 
-      // 同时等待读取完成或超时
       const readPromise = (async () => {
         while (!done) {
           const { value, done: doneReading } = await reader.read();
           done = doneReading;
           const chunk = decoder.decode(value, { stream: true });
-
-          // 处理SSE事件 - 使用缓冲区处理不完整的事件
           const events = (buffer + chunk).split('\n\n');
-          buffer = events.pop() || ''; // 保留最后一个可能不完整的事件
+          buffer = events.pop() || '';
 
           for (const event of events) {
-            if (event.startsWith('data:')) {
-              const dataStr = event.substring(5).trim();
-              // 跳过空数据和[DONE]信号
-              if (dataStr && dataStr !== '[DONE]') {
-                try {
-                  const data = JSON.parse(dataStr);
-                  console.log('收到SSE数据:', data);
-                  if (data.status === 'processing') {
-                    setProgress(data.progress);
-                    setProgressMessage(data.message);
-                    // 重置超时计时器
-                    clearTimeout(timeoutId);
-                    timeoutId = setTimeout(() => {
-                      reader.cancel();
-                    }, 120000); // 2分钟超时
-                  } else if (data.status === 'completed') {
-                    if (data.result.error) {
-                      // 处理后端返回的错误
-                      message.error(data.result.error);
-                      // 更新任务状态为失败
-                      setTaskQueue(prev => prev.map(t =>
-                        t.id === task.id ? { ...t, status: 'failed', error: data.result.error } : t
-                      ));
-                      setStatus('idle');
-                    } else {
-                      // 处理成功结果
-                      setCurrentResult(data.result);
-                      setStatus('reviewing');
-                      // 更新任务状态为完成
-                      setTaskQueue(prev => prev.map(t =>
-                        t.id === task.id ? {
-                          ...t,
-                          status: 'completed',
-                          title: data.result.title || data.result.preview?.split('\n')[0] || task.title
-                        } : t
-                      ));
-                    }
-                  } else if (data.status === 'error') {
-                    message.error(data.message);
-                    // 更新任务状态为失败
-                    setTaskQueue(prev => prev.map(t =>
-                      t.id === task.id ? { ...t, status: 'failed', error: data.message } : t
-                    ));
-                    setStatus('idle');
-                  }
-                } catch (e) {
-                  console.error('解析SSE数据失败:', e, '原始数据:', dataStr);
+            if (!event.startsWith('data:')) continue;
+            const dataStr = event.substring(5).trim();
+            if (!dataStr || dataStr === '[DONE]') continue;
+
+            try {
+              const data = JSON.parse(dataStr);
+              if (data.status === 'processing') {
+                setProgress(data.progress);
+                setProgressMessage(data.message);
+                clearTimeout(timeoutId);
+                timeoutId = setTimeout(() => {
+                  reader.cancel();
+                }, 120000);
+              } else if (data.status === 'completed') {
+                if (data.result.error) {
+                  message.error(data.result.error);
+                  setTaskQueue((prev) =>
+                    prev.map((item) =>
+                      item.id === task.id
+                        ? { ...item, status: 'failed', error: data.result.error }
+                        : item,
+                    ),
+                  );
+                  setStatus('idle');
+                } else {
+                  setCurrentResult(data.result);
+                  setStatus('reviewing');
+                  setTaskQueue((prev) =>
+                    prev.map((item) =>
+                      item.id === task.id
+                        ? {
+                            ...item,
+                            status: 'completed',
+                            title:
+                              data.result.title ||
+                              data.result.preview?.split('\n')[0] ||
+                              task.title,
+                          }
+                        : item,
+                    ),
+                  );
                 }
+              } else if (data.status === 'error') {
+                message.error(data.message);
+                setTaskQueue((prev) =>
+                  prev.map((item) =>
+                    item.id === task.id ? { ...item, status: 'failed', error: data.message } : item,
+                  ),
+                );
+                setStatus('idle');
               }
+            } catch (error) {
+              console.error('解析 SSE 数据失败:', error, dataStr);
             }
           }
         }
@@ -437,26 +529,25 @@ const DataManagerPage = () => {
       await Promise.race([readPromise, timeoutPromise]);
     } catch (error) {
       message.error(`处理失败: ${error.message}`);
-      // 更新任务状态为失败
-      setTaskQueue(prev => prev.map(t => 
-        t.id === task.id ? { ...t, status: 'failed', error: error.message } : t
-      ));
+      setTaskQueue((prev) =>
+        prev.map((item) =>
+          item.id === task.id ? { ...item, status: 'failed', error: error.message } : item,
+        ),
+      );
       setStatus('idle');
     } finally {
-      // 处理下一个任务
       setTimeout(() => {
         processNextTask();
       }, 500);
     }
   };
 
-  // 开始处理URL
   const handleStart = () => {
     const trimmedUrl = url.trim();
     const trimmedText = pastedText.trim();
 
     if (inputMode === 'url' && !trimmedUrl) {
-      message.error('请输入URL地址');
+      message.error('请输入 URL 地址');
       return;
     }
 
@@ -470,21 +561,18 @@ const DataManagerPage = () => {
       return;
     }
 
-    // 生成任务标题
     let taskTitle = trimmedUrl;
     if (inputMode === 'url') {
-      // 尝试从URL中提取更友好的标题
       try {
-        const urlObj = new URL(trimmedUrl);
-        taskTitle = urlObj.hostname + urlObj.pathname;
-      } catch (e) {
-        // 无效URL，使用原始值
+        const urlObject = new URL(trimmedUrl);
+        taskTitle = urlObject.hostname + urlObject.pathname;
+      } catch {
+        taskTitle = trimmedUrl;
       }
     } else {
       taskTitle = trimmedText.split('\n')[0].slice(0, 40) || '粘贴文本';
     }
 
-    // 创建新任务
     const newTask = {
       id: generateTaskId(),
       sourceType: inputMode,
@@ -493,27 +581,22 @@ const DataManagerPage = () => {
       category: selectedCategory,
       extract_mode: extractMode,
       title: taskTitle,
-      status: 'pending', // pending, processing, completed, failed
-      created: new Date().toISOString()
+      status: 'pending',
+      created: new Date().toISOString(),
     };
 
-    // 添加到任务队列
-    setTaskQueue(prev => [...prev, newTask]);
+    setTaskQueue((prev) => [...prev, newTask]);
 
-    // 如果当前没有正在处理的任务，直接处理新任务
     if (!currentTaskId) {
-      // 直接处理新任务，而不是依赖taskQueue状态
       setCurrentTaskId(newTask.id);
       processTask(newTask);
     }
 
-    // 清空输入
     setUrl('');
     setPastedText('');
     setSelectedCategory('');
   };
 
-  // 提交修正建议
   const handleCorrection = async () => {
     if (!currentResult || !feedback) return;
 
@@ -533,41 +616,35 @@ const DataManagerPage = () => {
         setFeedback('');
         message.success('修正完成');
       }
-    } catch (error) {
+    } catch {
       message.error('修正失败');
     }
   };
 
-  // 确认入库
   const handleConfirm = async () => {
     if (!currentResult) return;
 
     try {
-      // 确定要提交的项目索引
-      const indicesToSubmit = selectedItems.length > 0 
-        ? selectedItems 
-        : Array.from({ length: currentResult.questions?.length || 0 }, (_, i) => i);
+      const indicesToSubmit =
+        selectedItems.length > 0
+          ? selectedItems
+          : Array.from({ length: currentResult.questions?.length || 0 }, (_, i) => i);
 
       if (indicesToSubmit.length === 0) {
         message.error('没有要提交的项目');
         return;
       }
 
-      // 设置确认状态和初始进度
       setConfirmStatus('confirming');
       setConfirmProgress(0);
 
-      // 逐个提交项目
       let successCount = 0;
       const totalItems = indicesToSubmit.length;
-      
-      for (let i = 0; i < indicesToSubmit.length; i++) {
+
+      for (let i = 0; i < indicesToSubmit.length; i += 1) {
         const index = indicesToSubmit[i];
-        
-        // 更新进度
-        const progress = Math.round((i / totalItems) * 100);
-        setConfirmProgress(progress);
-        
+        setConfirmProgress(Math.round((i / totalItems) * 100));
+
         const response = await fetch(`${API_BASE}/commit`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -582,11 +659,10 @@ const DataManagerPage = () => {
 
         const data = await response.json();
         if (data.status === 'success') {
-          successCount++;
+          successCount += 1;
         }
       }
 
-      // 设置最终进度
       setConfirmProgress(100);
 
       if (successCount > 0) {
@@ -601,20 +677,18 @@ const DataManagerPage = () => {
       } else {
         message.error('入库失败');
       }
-      
-      // 重置确认状态
+
       setTimeout(() => {
         setConfirmStatus('idle');
         setConfirmProgress(0);
       }, 1000);
-    } catch (error) {
+    } catch {
       message.error('入库失败，请检查网络连接');
       setConfirmStatus('idle');
       setConfirmProgress(0);
     }
   };
 
-  // 添加新类别
   const handleAddCategory = async () => {
     try {
       const values = await form.validateFields();
@@ -638,9 +712,10 @@ const DataManagerPage = () => {
     }
   };
 
-  // 发送聊天消息
   const handleSendMessage = async () => {
-    if (!chatInput.trim()) return;
+    const nextInput = chatInput.trim();
+    if (!nextInput) return;
+
     const conversationId = currentChatId || generateChatConversationId();
     if (!currentChatId) {
       setCurrentChatId(conversationId);
@@ -648,27 +723,24 @@ const DataManagerPage = () => {
 
     const userMessage = {
       id: Date.now(),
-      content: chatInput,
-      type: 'user'
+      content: nextInput,
+      type: 'user',
     };
 
-    setChatMessages(prev => [...prev, userMessage]);
+    setChatMessages((prev) => [...prev, userMessage]);
     setChatInput('');
     setIsLoading(true);
 
     try {
       const historyForRequest = chatMessages
         .filter((msg) => !msg.loading)
-        .map((msg) => ({
-          type: msg.type,
-          content: msg.content
-        }));
+        .map((msg) => ({ type: msg.type, content: msg.content }));
 
       const response = await fetch(`${API_BASE}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message: chatInput,
+          message: nextInput,
           referenced_ids: [],
           category: selectedChatCategory || null,
           tags: selectedChatTags,
@@ -676,22 +748,18 @@ const DataManagerPage = () => {
         }),
       });
 
-      if (!response.ok) {
-        throw new Error('网络响应错误');
-      }
+      if (!response.ok) throw new Error('网络响应错误');
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
-      
-      let aiMessageId = Date.now() + 1;
+
+      const aiMessageId = Date.now() + 1;
       let aiMessageContent = '';
-      
-      setChatMessages(prev => [...prev, {
-        id: aiMessageId,
-        content: '',
-        type: 'ai',
-        loading: true
-      }]);
+
+      setChatMessages((prev) => [
+        ...prev,
+        { id: aiMessageId, content: '', type: 'ai', loading: true },
+      ]);
 
       while (true) {
         const { done, value } = await reader.read();
@@ -701,21 +769,24 @@ const DataManagerPage = () => {
         const lines = chunk.split('\n\n');
 
         for (const line of lines) {
-          if (line.startsWith('data:')) {
-            const dataStr = line.substring(5).trim();
-            if (dataStr && dataStr !== '[DONE]') {
-              try {
-                const data = JSON.parse(dataStr);
-                if (data.content) {
-                  aiMessageContent += data.content;
-                  setChatMessages(prev => prev.map(msg =>
-                    msg.id === aiMessageId ? { ...msg, content: aiMessageContent, loading: false } : msg
-                  ));
-                }
-              } catch (e) {
-                console.error('解析SSE数据失败:', e);
-              }
+          if (!line.startsWith('data:')) continue;
+          const dataStr = line.substring(5).trim();
+          if (!dataStr || dataStr === '[DONE]') continue;
+
+          try {
+            const data = JSON.parse(dataStr);
+            if (data.content) {
+              aiMessageContent += data.content;
+              setChatMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === aiMessageId
+                    ? { ...msg, content: aiMessageContent, loading: false }
+                    : msg,
+                ),
+              );
             }
+          } catch (error) {
+            console.error('解析 SSE 数据失败:', error);
           }
         }
       }
@@ -723,819 +794,665 @@ const DataManagerPage = () => {
       const finalMessages = [
         ...chatMessages,
         userMessage,
-        {
-          id: aiMessageId,
-          content: aiMessageContent,
-          type: 'ai',
-          loading: false
-        }
+        { id: aiMessageId, content: aiMessageContent, type: 'ai', loading: false },
       ];
-      await saveChatConversation(conversationId, finalMessages, selectedChatCategory, selectedChatTags);
+      await saveChatConversation(
+        conversationId,
+        finalMessages,
+        selectedChatCategory,
+        selectedChatTags,
+      );
     } catch (error) {
       console.error('发送消息失败:', error);
       message.error('发送消息失败，请检查网络连接');
-      setChatMessages(prev => prev.slice(0, -1)); // 移除AI消息占位符
+      setChatMessages((prev) => prev.slice(0, -1));
     } finally {
       setIsLoading(false);
     }
   };
 
-  // 处理侧边栏 resize
   const handleMouseDown = (e) => {
     e.preventDefault();
     setIsResizing(true);
   };
 
-  useEffect(() => {
-    const handleMouseMove = (e) => {
-      if (!isResizing || !sidebarRef.current) return;
+  const selectedCount =
+    status === 'reviewing' && currentResult?.questions?.length
+      ? selectedItems.length || currentResult.questions.length
+      : 0;
 
-      const sidebarRect = sidebarRef.current.getBoundingClientRect();
-      const newWidth = sidebarRect.right - e.clientX;
+  const statusMeta = STATUS_META[status] || STATUS_META.idle;
 
-      if (newWidth > 250 && newWidth < 800) {
-        setSidebarWidth(newWidth);
-      }
-    };
-
-    const handleMouseUp = () => {
-      setIsResizing(false);
-    };
-
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [isResizing]);
-
-  // 自动滚动到消息底部
-  useEffect(() => {
-    if (messagesEndRef.current && messagesEndRef.current.scrollTop !== undefined) {
-      messagesEndRef.current.scrollTop = messagesEndRef.current.scrollHeight;
-    }
-  }, [chatMessages]);
-
-  return (
-    <Layout style={{ height: '100vh', width: '100%', display: 'flex', margin: 0, padding: 0 }}>
-      {/* 左侧数据上传面板 */}
-      <Sider width={280} theme="light" style={{ borderRight: '1px solid #f0f0f0', padding: '24px', background: '#fafafa', overflowY: 'auto', flexShrink: 0 }}>
-        <div style={{ marginBottom: '24px' }}>
-          <h2 style={{ margin: '0 0 8px 0', fontSize: '20px', fontWeight: 600, color: '#262626' }}>数据上传</h2>
-          <p style={{ margin: '0', fontSize: '13px', color: '#8c8c8c' }}>支持 URL 抓取，也支持直接粘贴笔记文本</p>
+  const renderIdleContent = () => (
+    <div className="main-stack">
+      <SectionIntro
+        eyebrow="Knowledge Helper"
+        title="把采集、整理与问答收进一个更安静的工作台。"
+        description="左侧录入素材，中间确认结构化结果，右侧跟踪任务或直接进入知识库对话。整体视觉更轻，但信息密度更高。"
+        aside={<StatusPill tone={statusMeta.tone}>{statusMeta.label}</StatusPill>}
+      />
+      <div className="hero-grid">
+        <StatCard label="知识分类" value={categories.length} hint="按主题组织沉淀内容" />
+        <StatCard label="待处理任务" value={taskQueue.length} hint="支持排队和状态追踪" />
+        <StatCard label="历史会话" value={chatConversations.length} hint="保留带筛选条件的问答上下文" />
+      </div>
+      <div className="hero-panel">
+        <div>
+          <div className="hero-panel-label">工作方式</div>
+          <div className="hero-panel-title">先采集，再校对，最后沉淀成可问答知识。</div>
+          <p className="hero-panel-copy">
+            这个界面现在更偏向编辑器感：弱化花哨装饰，强化层级、留白和阅读节奏。
+          </p>
         </div>
-
-        <Space orientation="vertical" style={{ width: '100%' }} size="middle">
-          <div>
-            <label style={{ fontSize: '13px', fontWeight: 500, color: '#595959', display: 'block', marginBottom: '8px' }}>输入来源</label>
-            <Select
-              style={{ width: '100%' }}
-              size="large"
-              value={inputMode}
-              onChange={setInputMode}
-              options={[
-                { label: 'URL 链接', value: 'url' },
-                { label: '粘贴文本', value: 'text' }
-              ]}
-            />
-          </div>
-
-          <div>
-            <label style={{ fontSize: '13px', fontWeight: 500, color: '#595959', display: 'block', marginBottom: '8px' }}>
-              {inputMode === 'url' ? '输入URL地址' : '粘贴笔记文本'}
-            </label>
-            {inputMode === 'url' ? (
-              <Input
-                placeholder="https://www.bilibili.com/..."
-                value={url}
-                onChange={e => setUrl(e.target.value)}
-                size="large"
-                style={{ borderRadius: '6px' }}
-              />
-            ) : (
-              <Input.TextArea
-                placeholder="直接粘贴你的笔记、摘要、会议记录或其他文本内容"
-                value={pastedText}
-                onChange={e => setPastedText(e.target.value)}
-                rows={8}
-                style={{ borderRadius: '6px', resize: 'vertical' }}
-              />
-            )}
-          </div>
-
-          <div>
-            <label style={{ fontSize: '13px', fontWeight: 500, color: '#595959', display: 'block', marginBottom: '8px' }}>指定数据库类别 <span style={{ color: '#ff4d4f' }}>*</span></label>
-            <Select
-              style={{ width: '100%' }}
-              placeholder="请选择类别"
-              size="large"
-              value={selectedCategory}
-              onChange={setSelectedCategory}
-              options={categories.map(c => ({ label: c, value: c }))}
-              popupRender={(menu) => (
-                <>
-                  {menu}
-                  <Button
-                    type="text"
-                    icon={<PlusOutlined />}
-                    onClick={() => setAddCategoryModal(true)}
-                    style={{ width: '100%', textAlign: 'left' }}
-                  >
-                    添加新类别
-                  </Button>
-                </>
-              )}
-            />
-          </div>
-
-          <div>
-            <label style={{ fontSize: '13px', fontWeight: 500, color: '#595959', display: 'block', marginBottom: '8px' }}>提取模式</label>
-            <Select
-              style={{ width: '100%' }}
-              size="large"
-              value={extractMode}
-              onChange={setExtractMode}
-              options={[
-                { label: '提取图文', value: 'text_and_images' },
-                { label: '只提取文字', value: 'text_only' }
-              ]}
-            />
-          </div>
-
-          <Button
-            type="primary"
-            block
-            size="large"
-            onClick={handleStart}
-            style={{ height: '44px', borderRadius: '6px', fontSize: '15px', fontWeight: 500 }}
-          >
-            开始处理
+        <div className="hero-panel-actions">
+          <Button type="primary" size="large" onClick={() => setStatus('categories')}>
+            浏览知识库
           </Button>
-
-          <div style={{ height: '1px', background: '#e8e8e8', margin: '8px 0' }}></div>
-
-          <div>
-            <label style={{ fontSize: '13px', fontWeight: 500, color: '#595959', display: 'block', marginBottom: '8px' }}>知识库管理</label>
-          </div>
-
-          <Button
-            block
-            size="large"
-            icon={<FolderOpenOutlined />}
-            onClick={() => setStatus('categories')}
-            style={{ height: '44px', borderRadius: '6px', fontSize: '15px', fontWeight: 500 }}
-          >
-            查看知识库
+          <Button size="large" onClick={() => setShowChatSidebar((value) => !value)}>
+            打开对话助手
           </Button>
-          
-          <Button
-            block
-            size="large"
-            icon={<MessageOutlined />}
-            onClick={() => setShowChatSidebar(!showChatSidebar)}
-            style={{ height: '44px', borderRadius: '6px', fontSize: '15px', fontWeight: 500 }}
-          >
-            对话助手
-          </Button>
-        </Space>
-      </Sider>
+        </div>
+      </div>
+    </div>
+  );
 
-      {/* 中间内容区域 */}
-      <Layout style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
-        <Content style={{ padding: '32px', background: '#ffffff', overflow: 'auto', flex: 1, minWidth: 0 }}>
-          {status === 'idle' && (
-            <div style={{ textAlign: 'center', marginTop: '120px', color: '#999' }}>
-              <div style={{ fontSize: '64px', marginBottom: '24px' }}>📚</div>
-              <p style={{ fontSize: '18px' }}>在左侧输入 URL 或粘贴文本开始处理，或点击"查看知识库"浏览已有内容</p>
-            </div>
-          )}
+  const renderProcessingContent = () => (
+    <div className="center-panel-wrap">
+      <div className="spot-panel">
+        <div className="spot-panel-icon">◌</div>
+        <div className="spot-panel-title">
+          {confirmStatus === 'confirming' ? '正在确认入库' : '正在整理素材'}
+        </div>
+        <p className="spot-panel-copy">
+          {confirmStatus === 'confirming'
+            ? '系统会逐条提交内容，并保留当前分类和标签。'
+            : progressMessage || '正在抽取正文、结构化问题与标签。'}
+        </p>
+        <Progress
+          percent={confirmStatus === 'confirming' ? confirmProgress : progress}
+          status="active"
+          strokeColor={{ '0%': '#1f2937', '100%': '#9ca3af' }}
+          trailColor="rgba(15, 23, 42, 0.08)"
+        />
+      </div>
+    </div>
+  );
 
-          {status === 'processing' && (
-            <div style={{ textAlign: 'center', marginTop: '120px' }}>
-              <Card style={{ maxWidth: '500px', margin: '0 auto', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}>
-                <div style={{ fontSize: '48px', marginBottom: '24px' }}>⏳</div>
-                <Progress percent={progress} status="active" strokeColor={{ '0%': '#108ee9', '100%': '#87d068' }} />
-                <p style={{ marginTop: '20px', fontSize: '16px', color: '#666' }}>{progressMessage}</p>
-              </Card>
-            </div>
-          )}
-
-          {confirmStatus === 'confirming' && (
-            <div style={{ textAlign: 'center', marginTop: '120px' }}>
-              <Card style={{ maxWidth: '500px', margin: '0 auto', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}>
-                <div style={{ fontSize: '48px', marginBottom: '24px' }}>💾</div>
-                <h3 style={{ marginBottom: '20px' }}>确认入库进度</h3>
-                <Progress percent={confirmProgress} status="active" strokeColor={{ '0%': '#108ee9', '100%': '#52c41a' }} />
-                <p style={{ marginTop: '20px', fontSize: '16px', color: '#666' }}>正在将项目添加到知识库...</p>
-              </Card>
-            </div>
-          )}
-
-          {status === 'reviewing' && currentResult && (
-            <Card
-              title={
-                <span>
-                  <span style={{ fontSize: '18px', fontWeight: 500 }}>处理结果预览</span>
-                  <span style={{ fontSize: '14px', color: '#666', marginLeft: '12px' }}>
-                    (共 {currentResult.questions?.length || 0} 个问题)
-                  </span>
-                </span>
-              }
-              extra={<span style={{ background: '#fff7e6', color: '#fa8c16', padding: '4px 12px', borderRadius: '4px', fontSize: '14px' }}>待确认</span>}
-              style={{ boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}
-            >
-              <div style={{ marginBottom: '24px', padding: '12px', background: '#f6f8fa', borderRadius: '6px' }}>
-                <span style={{ color: '#666', fontSize: '14px' }}>类别：</span>
-                <span style={{ fontWeight: 500, marginLeft: '8px', color: '#262626' }}>{currentResult.category}</span>
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(500px, 1fr))', gap: '20px' }}>
-                {currentResult.questions && currentResult.questions.map((question, index) => (
-                  <Card
-                    key={index}
-                    style={{
-                      borderLeft: '4px solid #1890ff',
-                      boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
-                      borderRadius: '6px'
-                    }}
-                  >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                    <div style={{ fontSize: '16px', fontWeight: 500, color: '#262626' }}>
-                      <span style={{ color: '#1890ff', marginRight: '8px' }}>#{index + 1}</span>
-                    </div>
-                    <div>
-                      <input
-                        type="checkbox"
-                        checked={selectedItems.includes(index)}
-                        onChange={(e) => {
-                          if (e.target.checked) {
-                            setSelectedItems([...selectedItems, index]);
-                          } else {
-                            setSelectedItems(selectedItems.filter(idx => idx !== index));
-                          }
-                        }}
-                        style={{ cursor: 'pointer' }}
-                      />
-                      <span style={{ marginLeft: '8px', fontSize: '14px', color: '#666', cursor: 'pointer', userSelect: 'none' }}>选择</span>
-                    </div>
-                  </div>
-                  <div style={{ marginBottom: '16px', padding: '12px', background: '#fafafa', borderRadius: '4px', lineHeight: '1.6' }}>
-                    <strong style={{ color: '#595959', fontSize: '14px', display: 'block', marginBottom: '6px' }}>问题：</strong>
-                    {question}
-                  </div>
-                  <div style={{ marginBottom: '12px' }}>
-                    <strong style={{ color: '#595959', fontSize: '14px' }}>答案：</strong>
-                  </div>
-                  <pre style={{ background: '#f6f8fa', padding: '12px', marginBottom: '12px', borderRadius: '4px', whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: '14px', lineHeight: '1.6' }}>
-                    {currentResult.answers && currentResult.answers[index]}
-                  </pre>
-                  <div>
-                    <strong style={{ color: '#595959', fontSize: '14px' }}>标签：</strong>
-                    {currentResult.tags && currentResult.tags[index] && currentResult.tags[index].length > 0 ? (
-                      <div style={{ marginTop: '6px' }}>
-                        {currentResult.tags[index].map((tag, tagIdx) => (
-                          <span key={tagIdx} style={{
-                            display: 'inline-block',
-                            background: '#e6f7ff',
-                            color: '#096dd9',
-                            padding: '2px 8px',
-                            borderRadius: '4px',
-                            fontSize: '12px',
-                            marginRight: '6px',
-                            marginBottom: '4px'
-                          }}>
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-                    ) : (
-                      <span style={{ color: '#999', fontSize: '14px' }}>无</span>
-                    )}
-                  </div>
-                  <div style={{ marginTop: '16px' }}>
-                    <strong style={{ color: '#595959', fontSize: '14px', display: 'block', marginBottom: '8px' }}>可编辑标签：</strong>
-                    <div style={{ display: 'grid', gap: '8px' }}>
-                      {getCurrentTagsForIndex(index).map((tag, tagIdx) => (
-                        <div key={`${index}-${tagIdx}`} style={{ display: 'flex', gap: '8px' }}>
-                          <Input
-                            value={tag}
-                            placeholder="输入或修改 tag"
-                            onChange={(e) => updateEditableTag(index, tagIdx, e.target.value)}
-                          />
-                          <Button danger onClick={() => removeEditableTag(index, tagIdx)}>
-                            删除
-                          </Button>
-                        </div>
-                      ))}
-                      <Button onClick={() => addEditableTag(index)} style={{ width: 'fit-content' }}>
-                        添加标签
-                      </Button>
-                      {reviewTagOptions.length > 0 && (
-                        <div>
-                          <div style={{ fontSize: '12px', color: '#8c8c8c', marginBottom: '6px' }}>
-                            当前分类已有标签
-                          </div>
-                          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                            {reviewTagOptions.map((tag) => (
-                              <Button
-                                key={tag}
-                                size="small"
-                                onClick={() => applySuggestedTag(index, tag)}
-                              >
-                                {tag}
-                              </Button>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </Card>
-              ))}
-              </div>
-
-              <div style={{ marginTop: '24px', padding: '20px', background: '#f9f9f9', borderRadius: '8px', border: '1px solid #e8e8e8' }}>
-                <p style={{ marginBottom: '12px', fontSize: '14px', color: '#666' }}>如果不满意，请输入修正提示：</p>
-                <Input.TextArea
-                  value={feedback}
-                  onChange={e => setFeedback(e.target.value)}
-                  placeholder="例如：请忽略第一行表头，重新提取..."
-                  rows={3}
-                  style={{ marginBottom: '12px' }}
-                />
-                <Space style={{ marginTop: '8px' }}>
-                  <Button
-                    icon={<SendOutlined />}
-                    onClick={handleCorrection}
-                    disabled={!feedback}
-                    style={{ minWidth: '100px' }}
-                  >
-                    发送修正
-                  </Button>
-                  <Button
-                    type="primary"
-                    icon={<CheckCircleOutlined />}
-                    onClick={handleConfirm}
-                    style={{ minWidth: '140px' }}
-                  >
-                    {selectedItems.length > 0 ? `确认入库选中的 ${selectedItems.length} 个项目` : '确认入库所有项目'}
-                  </Button>
-                </Space>
-              </div>
-            </Card>
-          )}
-
-          {status === 'categories' && (
-            <Card
-              title={
-                <span>
-                  <span style={{ fontSize: '18px', fontWeight: 500 }}>知识库分类</span>
-                  <span style={{ fontSize: '14px', color: '#666', marginLeft: '12px' }}>
-                    ({categories.length} 个分类)
-                  </span>
-                </span>
-              }
-              extra={<Button size="small" onClick={fetchCategories}>刷新</Button>}
-              style={{ boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}
-            >
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '20px' }}>
-                {categories.map((category) => (
-                  <Card
-                    key={category}
-                    hoverable
-                    onClick={() => {
-                      setSelectedCategory(category);
-                      fetchVaultDataByCategory(category);
-                      setStatus('knowledgeBase');
-                    }}
-                    style={{ borderRadius: '8px', textAlign: 'center', padding: '16px' }}
-                  >
-                    <div style={{ fontSize: '48px', marginBottom: '12px' }}>📁</div>
-                    <div style={{ fontSize: '16px', fontWeight: 500, color: '#262626' }}>{category}</div>
-                    <div style={{ fontSize: '12px', color: '#999', marginTop: '4px' }}>点击查看内容</div>
-                  </Card>
-                ))}
-              </div>
-              <Button
-                type="primary"
-                style={{ marginTop: '24px', minWidth: '140px', height: '40px', borderRadius: '6px' }}
-                onClick={() => {
-                  setSelectedCategory('');
-                  fetchVaultDataByCategory();
-                  setStatus('knowledgeBase');
-                }}
-              >
-                查看所有知识
-              </Button>
-            </Card>
-          )}
-
-          {status === 'knowledgeBase' && (
-            <Card
-              title={
-                <span>
-                  <span style={{ fontSize: '18px', fontWeight: 500 }}>
-                    {selectedCategory ? `知识库 - ${selectedCategory}` : '所有知识'}
-                  </span>
-                  <span style={{ fontSize: '14px', color: '#666', marginLeft: '12px' }}>
-                    ({finalItems.length} 条记录)
-                  </span>
-                </span>
-              }
-              extra={
-                <Space>
-                  <Button size="small" onClick={() => fetchVaultDataByCategory(selectedCategory)}>刷新</Button>
-                  <Button size="small" onClick={() => setStatus('categories')}>返回分类</Button>
-                </Space>
-              }
-              style={{ boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}
-            >
-              <div style={{ marginBottom: '20px', padding: '16px', background: '#fafafa', borderRadius: '8px', border: '1px solid #f0f0f0' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '10px' }}>
-                  <div style={{ fontSize: '15px', fontWeight: 600, color: '#262626' }}>Tag 概览</div>
-                  <div style={{ fontSize: '12px', color: '#8c8c8c' }}>
-                    {sortedKnowledgeTags.length} 个标签
-                  </div>
-                </div>
-                {sortedKnowledgeTags.length > 0 ? (
-                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                    {sortedKnowledgeTags.map(({ tag, count }) => (
-                      <span
-                        key={tag}
-                        style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '6px',
-                          padding: '4px 10px',
-                          background: '#f0f5ff',
-                          color: '#1d39c4',
-                          borderRadius: '999px',
-                          fontSize: '12px'
-                        }}
-                      >
-                        <span>{tag}</span>
-                        <span style={{ color: '#597ef7' }}>{count}</span>
-                      </span>
-                    ))}
-                  </div>
-                ) : (
-                  <div style={{ fontSize: '13px', color: '#999' }}>当前范围内还没有 tag 数据</div>
-                )}
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(450px, 1fr))', gap: '20px' }}>
-                {finalItems.map((item) => (
-                  <Card
-                    key={item.id}
-                    hoverable
-                    style={{
-                      borderLeft: '4px solid #1890ff',
-                      borderRadius: '8px',
-                      boxShadow: '0 1px 3px rgba(0,0,0,0.04)'
-                    }}
-                  >
-                    <div style={{ cursor: 'pointer' }} onClick={() => {
-                      const newExpanded = new Set(expandedCards);
-                      if (newExpanded.has(item.id)) {
-                        newExpanded.delete(item.id);
-                      } else {
-                        newExpanded.add(item.id);
-                      }
-                      setExpandedCards(newExpanded);
-                    }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
-                        <h4 style={{ margin: '0', fontSize: '15px', lineHeight: '1.4', flex: 1, marginRight: '12px' }}>{item.question}</h4>
-                        <Space>
-                          <span style={{ fontSize: '12px', color: '#999', whiteSpace: 'nowrap' }}>
-                            {new Date(item.created_at).toLocaleDateString('zh-CN')}
-                          </span>
-                          <Popconfirm
-                            title="确定要删除这条知识吗？"
-                            description="删除后将无法恢复"
-                            onConfirm={() => handleDeleteItem(item.id)}
-                            okText="确定"
-                            cancelText="取消"
-                          >
-                            <Button
-                              type="text"
-                              danger
-                              icon={<DeleteOutlined />}
-                              size="small"
-                              style={{ marginLeft: '8px' }}
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              删除
-                            </Button>
-                          </Popconfirm>
-                        </Space>
-                      </div>
-                      <div style={{ fontSize: '12px', color: '#999', marginBottom: '8px' }}>
-                        <span style={{ background: '#f0f0f0', padding: '2px 8px', borderRadius: '4px' }}>{item.category}</span>
-                      </div>
-                      {expandedCards.has(item.id) && (
-                        <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #f0f0f0' }}>
-                          <div style={{ fontSize: '14px', color: '#595959', marginBottom: '8px', fontWeight: 500 }}>答案：</div>
-                          <pre style={{ background: '#f6f8fa', padding: '12px', borderRadius: '4px', whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: '14px', lineHeight: '1.6', margin: 0 }}>
-                            {item.answer}
-                          </pre>
-                        </div>
-                      )}
-                    </div>
-                  </Card>
-                ))}
-              </div>
-              {finalItems.length === 0 && (
-                <div style={{ textAlign: 'center', padding: '60px 20px', color: '#999' }}>
-                  <div style={{ fontSize: '64px', marginBottom: '16px' }}>📭</div>
-                  <p style={{ fontSize: '16px' }}>该分类下暂无知识内容</p>
-                </div>
-              )}
-            </Card>
-          )}
-
-
-        </Content>
-      </Layout>
-
-      {/* Resize handle 放在中间内容和侧边栏之间 */}
-      <div
-        style={{
-          width: '8px',
-          cursor: isResizing ? 'col-resize' : 'ew-resize',
-          backgroundColor: isResizing ? '#1890ff' : '#e8e8e8',
-          flexShrink: 0,
-          transition: 'background-color 0.2s ease'
-        }}
-        onMouseDown={handleMouseDown}
+  const renderReviewContent = () => (
+    <div className="main-stack">
+      <SectionIntro
+        eyebrow="Review"
+        title="结构化结果预览"
+        description={`当前共识别 ${currentResult?.questions?.length || 0} 个候选问题，可逐条修正后入库。`}
+        aside={<StatusPill tone="warning">待确认 {selectedCount} 项</StatusPill>}
       />
 
-      {/* 右侧任务队列和聊天侧边栏 */}
-      <div
-        style={{
-          width: sidebarWidth,
-          background: '#fafafa',
-          overflowY: 'auto',
-          flexShrink: 0,
-          borderLeft: '1px solid #f0f0f0',
-          display: 'flex',
-          flexDirection: 'column'
-        }}
-        ref={sidebarRef}
-      >
-        <div style={{ padding: '0', flex: 1 }}>
-        {!showChatSidebar ? (
-          <div style={{ padding: '24px' }}>
-            <div style={{ marginBottom: '16px' }}>
-              <h2 style={{ margin: '0 0 8px 0', fontSize: '18px', fontWeight: 600, color: '#262626' }}>任务队列</h2>
-              <span style={{ fontSize: '12px', color: '#8c8c8c', background: '#f0f0f0', padding: '2px 8px', borderRadius: '4px' }}>
-                {taskQueue.length} 个任务
-              </span>
-            </div>
-            {taskQueue.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '40px 0', color: '#999' }}>
-                <div style={{ fontSize: '48px', marginBottom: '12px' }}>📋</div>
-                <p style={{ fontSize: '14px' }}>暂无任务</p>
-              </div>
+      <div className="surface-card result-summary">
+        <div>
+          <div className="surface-label">当前分类</div>
+          <div className="surface-emphasis">{currentResult?.category}</div>
+        </div>
+        <div>
+          <div className="surface-label">可复用标签</div>
+          <div className="tag-row">
+            {reviewTagOptions.length > 0 ? (
+              reviewTagOptions.slice(0, 10).map((tag) => <StatusPill key={tag}>{tag}</StatusPill>)
             ) : (
-              <div>
-                {taskQueue.map((task) => (
-                  <Card
-                    key={task.id}
-                    size="small"
-                    style={{
-                      marginBottom: '12px',
-                      borderLeft: task.status === 'processing' ? '3px solid #1890ff' :
-                                 task.status === 'completed' ? '3px solid #52c41a' :
-                                 task.status === 'failed' ? '3px solid #ff4d4f' : '3px solid #d9d9d9',
-                      borderRadius: '6px',
-                      boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
-                      cursor: task.status === 'completed' ? 'pointer' : 'default'
-                    }}
-                    onClick={() => {
-                      if (task.status === 'completed') {
-                        message.info('点击了已完成的任务');
-                      }
-                    }}
-                  >
-                    <div style={{ marginBottom: '8px' }}>
-                      <div
-                        style={{
-                          fontSize: '14px',
-                          fontWeight: 500,
-                          color: task.status === 'completed' ? '#1890ff' : '#262626',
-                          lineHeight: '1.4'
-                        }}
-                      >
-                        {task.title.length > 30 ? task.title.substring(0, 30) + '...' : task.title}
-                      </div>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px' }}>
-                      <span style={{ color: '#8c8c8c' }}>{task.category}</span>
-                      <span style={{
-                        color: task.status === 'pending' ? '#faad14' :
-                               task.status === 'processing' ? '#1890ff' :
-                               task.status === 'completed' ? '#52c41a' : '#ff4d4f',
-                        fontWeight: 500
-                      }}>
-                        {task.status === 'pending' && '等待中'}
-                        {task.status === 'processing' && '处理中'}
-                        {task.status === 'completed' && '已完成'}
-                        {task.status === 'failed' && '失败'}
-                      </span>
-                    </div>
-                    {task.error && (
-                      <div style={{ fontSize: '11px', color: '#ff4d4f', marginTop: '8px', padding: '4px', background: '#fff2f0', borderRadius: '4px' }}>
-                        {task.error.length > 40 ? task.error.substring(0, 40) + '...' : task.error}
-                      </div>
-                    )}
-                  </Card>
-                ))}
-              </div>
+              <span className="muted-text">当前分类还没有历史标签</span>
             )}
           </div>
-        ) : (
-          <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-            <div style={{ padding: '20px 24px', borderBottom: '1px solid #e8e8e8', background: '#fafafa', flexShrink: 0 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                <h2 style={{ margin: '0', fontSize: '18px', fontWeight: 600, color: '#262626' }}>对话助手</h2>
-                <Space>
-                  <Button size="small" onClick={handleNewConversation}>新建</Button>
-                  <Button size="small" onClick={() => setShowChatSidebar(false)}>关闭</Button>
-                </Space>
-              </div>
-              <p style={{ margin: '0', fontSize: '13px', color: '#8c8c8c' }}>基于知识库的智能问答</p>
-              <div style={{ marginTop: '16px', marginBottom: '16px' }}>
-                <div style={{ fontSize: '12px', fontWeight: 500, color: '#595959', marginBottom: '8px' }}>历史会话</div>
-                <div style={{ display: 'grid', gap: '8px', maxHeight: '160px', overflowY: 'auto' }}>
-                  {chatConversations.length > 0 ? (
-                    chatConversations.map((conversation) => (
-                      <div
-                        key={conversation.id}
-                        style={{
-                          display: 'flex',
-                          gap: '8px',
-                          alignItems: 'center'
-                        }}
-                      >
-                        <Button
-                          type={conversation.id === currentChatId ? 'primary' : 'default'}
-                          onClick={() => loadChatConversation(conversation.id)}
-                          style={{
-                            flex: 1,
-                            textAlign: 'left',
-                            justifyContent: 'flex-start'
-                          }}
-                        >
-                          {conversation.title}
-                        </Button>
-                        <Popconfirm
-                          title="删除这个会话？"
-                          onConfirm={() => handleDeleteConversation(conversation.id)}
-                          okText="删除"
-                          cancelText="取消"
-                        >
-                          <Button danger size="small">删</Button>
-                        </Popconfirm>
-                      </div>
-                    ))
-                  ) : (
-                    <div style={{ fontSize: '12px', color: '#8c8c8c' }}>暂无历史会话</div>
-                  )}
-                </div>
-              </div>
-              <div style={{ marginTop: '16px', display: 'grid', gap: '12px' }}>
-                <div>
-                  <label style={{ fontSize: '12px', fontWeight: 500, color: '#595959', display: 'block', marginBottom: '6px' }}>检索分类</label>
-                  <Select
-                    allowClear
-                    style={{ width: '100%' }}
-                    placeholder="不过滤分类"
-                    value={selectedChatCategory || undefined}
-                    onChange={(value) => setSelectedChatCategory(value || '')}
-                    options={categories.map(c => ({ label: c, value: c }))}
-                  />
-                </div>
-                <div>
-                  <label style={{ fontSize: '12px', fontWeight: 500, color: '#595959', display: 'block', marginBottom: '6px' }}>检索标签</label>
-                  <Select
-                    mode="multiple"
-                    allowClear
-                    style={{ width: '100%' }}
-                    placeholder="不过滤标签"
-                    value={selectedChatTags}
-                    onChange={(value) => setSelectedChatTags(value)}
-                    options={chatTagOptions.map(tag => ({ label: tag, value: tag }))}
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* 聊天消息区域 */}
-            <div
-              style={{
-                flex: 1,
-                overflowY: 'auto',
-                padding: '20px 24px',
-                background: '#fafafa',
-                minHeight: 0
-              }}
-              ref={messagesEndRef}
-            >
-              {chatMessages.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '60px 20px', color: '#999' }}>
-                  <div style={{ fontSize: '64px', marginBottom: '16px' }}>🤖</div>
-                  <p style={{ fontSize: '16px' }}>开始与助手对话吧！</p>
-                  <p style={{ fontSize: '14px', marginTop: '8px' }}>助手会基于知识库内容回答你的问题</p>
-                </div>
-              ) : (
-                chatMessages.map((message) => (
-                  <div
-                    key={message.id}
-                    style={{
-                      display: 'flex',
-                      marginBottom: '20px',
-                      justifyContent: message.type === 'user' ? 'flex-end' : 'flex-start'
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'flex-start' }}>
-                      {message.type === 'ai' && (
-                        <QuestionCircleOutlined style={{ fontSize: '18px', color: '#1890ff', marginRight: '8px', marginTop: '2px' }} />
-                      )}
-                      <div
-                        style={{
-                          maxWidth: '100%',
-                          padding: '12px 16px',
-                          borderRadius: '16px',
-                          backgroundColor: message.type === 'user' ? '#1890ff' : '#ffffff',
-                          color: message.type === 'user' ? '#ffffff' : '#333333',
-                          boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
-                          wordBreak: 'break-word',
-                          overflowWrap: 'break-word'
-                        }}
-                      >
-                        {message.loading ? (
-                          <div style={{ display: 'flex', alignItems: 'center' }}>
-                            <Spin size="small" indicator={<LoadingOutlined style={{ color: '#1890ff' }} spin />} />
-                            <span style={{ marginLeft: '8px' }}>助手正在思考...</span>
-                          </div>
-                        ) : message.type === 'user' ? (
-                          <Typography.Text style={{ lineHeight: '1.6' }}>{message.content}</Typography.Text>
-                        ) : (
-                          <div style={{ lineHeight: '1.6' }}>
-                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                              {message.content}
-                            </ReactMarkdown>
-                          </div>
-                        )}
-                      </div>
-                      {message.type === 'user' && (
-                        <UserOutlined style={{ fontSize: '18px', color: '#1890ff', marginLeft: '8px', marginTop: '2px' }} />
-                      )}
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-
-            {/* 输入区域 */}
-            <div style={{ padding: '16px 24px', borderTop: '1px solid #e8e8e8', background: '#ffffff', flexShrink: 0 }}>
-              <Input.TextArea
-                value={chatInput}
-                onChange={e => setChatInput(e.target.value)}
-                placeholder="输入你的问题..."
-                rows={2}
-                style={{
-                  marginBottom: '12px',
-                  resize: 'none',
-                  borderRadius: '8px'
-                }}
-                onPressEnter={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    handleSendMessage();
-                  }
-                }}
-              />
-              <Button
-                type="primary"
-                icon={<SendOutlined />}
-                onClick={handleSendMessage}
-                loading={isLoading}
-                disabled={isLoading || !chatInput.trim()}
-                block
-                style={{ borderRadius: '8px' }}
-              >
-                发送
-              </Button>
-            </div>
-          </div>
-        )}
         </div>
       </div>
 
-      {/* 添加新类别模态框 */}
+      <div className="review-grid">
+        {currentResult?.questions?.map((question, index) => (
+          <Card key={index} className="review-card" bordered={false}>
+            <div className="review-card-header">
+              <div>
+                <div className="review-index">#{index + 1}</div>
+                <div className="review-question">{question}</div>
+              </div>
+              <label className="select-chip">
+                <input
+                  type="checkbox"
+                  checked={selectedItems.includes(index)}
+                  onChange={(e) => {
+                    if (e.target.checked) {
+                      setSelectedItems([...selectedItems, index]);
+                    } else {
+                      setSelectedItems(selectedItems.filter((idx) => idx !== index));
+                    }
+                  }}
+                />
+                <span>选择</span>
+              </label>
+            </div>
+
+            <div className="review-block">
+              <div className="surface-label">答案</div>
+              <pre className="answer-block">{currentResult.answers?.[index]}</pre>
+            </div>
+
+            <div className="review-block">
+              <div className="surface-label">标签</div>
+              <div className="tag-row">
+                {currentResult.tags?.[index]?.length ? (
+                  currentResult.tags[index].map((tag) => <StatusPill key={`${index}-${tag}`}>{tag}</StatusPill>)
+                ) : (
+                  <span className="muted-text">暂无标签</span>
+                )}
+              </div>
+            </div>
+
+            <div className="review-block">
+              <div className="surface-label">编辑标签</div>
+              <div className="editable-tag-list">
+                {getCurrentTagsForIndex(index).map((tag, tagIdx) => (
+                  <div className="editable-tag-row" key={`${index}-${tagIdx}`}>
+                    <Input
+                      value={tag}
+                      placeholder="输入或修改 tag"
+                      onChange={(e) => updateEditableTag(index, tagIdx, e.target.value)}
+                    />
+                    <Button danger onClick={() => removeEditableTag(index, tagIdx)}>
+                      删除
+                    </Button>
+                  </div>
+                ))}
+                <Button onClick={() => addEditableTag(index)} className="ghost-button">
+                  添加标签
+                </Button>
+                {reviewTagOptions.length > 0 ? (
+                  <div className="tag-row">
+                    {reviewTagOptions.map((tag) => (
+                      <Button
+                        key={`${index}-${tag}`}
+                        size="small"
+                        className="suggestion-button"
+                        onClick={() => applySuggestedTag(index, tag)}
+                      >
+                        {tag}
+                      </Button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </Card>
+        ))}
+      </div>
+
+      <div className="surface-card feedback-panel">
+        <div>
+          <div className="surface-emphasis">如果结果需要微调，可以先给出修正提示。</div>
+          <p className="muted-text">例如忽略表头、重组问答口径，或限定某些段落不要入库。</p>
+        </div>
+        <TextArea
+          value={feedback}
+          onChange={(e) => setFeedback(e.target.value)}
+          placeholder="例如：请忽略第一行表头，重新提取..."
+          rows={3}
+        />
+        <Space wrap>
+          <Button
+            icon={<SendOutlined />}
+            onClick={handleCorrection}
+            disabled={!feedback}
+            className="ghost-button"
+          >
+            发送修正
+          </Button>
+          <Button type="primary" icon={<CheckCircleOutlined />} onClick={handleConfirm}>
+            {selectedItems.length > 0 ? `确认入库选中的 ${selectedItems.length} 个项目` : '确认入库所有项目'}
+          </Button>
+        </Space>
+      </div>
+    </div>
+  );
+
+  const renderCategoryContent = () => (
+    <div className="main-stack">
+      <SectionIntro
+        eyebrow="Library"
+        title="知识分类"
+        description="按分类浏览内容，比传统表格更轻，也更适合快速进入某个主题。"
+        aside={<StatusPill tone="neutral">{categories.length} 个分类</StatusPill>}
+      />
+      <div className="category-grid">
+        {categories.map((category) => (
+          <button
+            key={category}
+            type="button"
+            className="category-tile"
+            onClick={() => {
+              setSelectedCategory(category);
+              fetchVaultDataByCategory(category);
+              setStatus('knowledgeBase');
+            }}
+          >
+            <div className="category-tile-icon">□</div>
+            <div className="category-tile-name">{category}</div>
+            <div className="category-tile-hint">进入该分类</div>
+          </button>
+        ))}
+      </div>
+      <div className="inline-actions">
+        <Button onClick={fetchCategories} className="ghost-button">
+          刷新分类
+        </Button>
+        <Button
+          type="primary"
+          onClick={() => {
+            setSelectedCategory('');
+            fetchVaultDataByCategory();
+            setStatus('knowledgeBase');
+          }}
+        >
+          查看所有知识
+        </Button>
+      </div>
+    </div>
+  );
+
+  const renderKnowledgeContent = () => (
+    <div className="main-stack">
+      <SectionIntro
+        eyebrow="Vault"
+        title={selectedCategory ? `知识库 · ${selectedCategory}` : '所有知识'}
+        description={`当前范围共 ${finalItems.length} 条记录。点击卡片可展开答案详情。`}
+        aside={<StatusPill tone="success">{finalItems.length} 条记录</StatusPill>}
+      />
+
+      <div className="surface-card">
+        <div className="surface-row">
+          <div>
+            <div className="surface-label">Tag 概览</div>
+            <div className="surface-emphasis">{sortedKnowledgeTags.length} 个标签</div>
+          </div>
+          <Space wrap>
+            <Button onClick={() => fetchVaultDataByCategory(selectedCategory)} className="ghost-button">
+              刷新
+            </Button>
+            <Button onClick={() => setStatus('categories')} className="ghost-button">
+              返回分类
+            </Button>
+          </Space>
+        </div>
+        <div className="tag-row">
+          {sortedKnowledgeTags.length > 0 ? (
+            sortedKnowledgeTags.map(({ tag, count }) => (
+              <span key={tag} className="tag-chip">
+                <span>{tag}</span>
+                <strong>{count}</strong>
+              </span>
+            ))
+          ) : (
+            <span className="muted-text">当前范围内还没有 tag 数据</span>
+          )}
+        </div>
+      </div>
+
+      {finalItems.length === 0 ? (
+        <div className="surface-card">
+          <EmptyState icon="□" title="该分类下暂无知识内容" description="先从左侧录入素材，或切换分类查看。" />
+        </div>
+      ) : (
+        <div className="knowledge-grid">
+          {finalItems.map((item) => (
+            <Card key={item.id} className="knowledge-card" bordered={false}>
+              <button
+                type="button"
+                className="knowledge-card-toggle"
+                onClick={() => {
+                  const nextExpanded = new Set(expandedCards);
+                  if (nextExpanded.has(item.id)) nextExpanded.delete(item.id);
+                  else nextExpanded.add(item.id);
+                  setExpandedCards(nextExpanded);
+                }}
+              >
+                <div className="knowledge-card-top">
+                  <div>
+                    <div className="knowledge-question">{item.question}</div>
+                    <div className="knowledge-meta">
+                      <StatusPill>{item.category}</StatusPill>
+                      <span>{new Date(item.created_at).toLocaleDateString('zh-CN')}</span>
+                    </div>
+                  </div>
+                  <Popconfirm
+                    title="确定要删除这条知识吗？"
+                    description="删除后将无法恢复"
+                    onConfirm={() => handleDeleteItem(item.id)}
+                    okText="确定"
+                    cancelText="取消"
+                  >
+                    <Button
+                      type="text"
+                      danger
+                      icon={<DeleteOutlined />}
+                      size="small"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      删除
+                    </Button>
+                  </Popconfirm>
+                </div>
+                {expandedCards.has(item.id) ? (
+                  <div className="answer-block answer-block-plain">{item.answer}</div>
+                ) : null}
+              </button>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
+  const renderQueueSidebar = () => (
+    <div className="sidebar-panel">
+      <div className="sidebar-panel-header">
+        <div>
+          <div className="sidebar-title">任务队列</div>
+          <div className="sidebar-copy">查看当前处理顺序与结果状态。</div>
+        </div>
+        <StatusPill>{taskQueue.length} 个任务</StatusPill>
+      </div>
+
+      {taskQueue.length === 0 ? (
+        <EmptyState icon="◻" title="暂无任务" description="提交 URL 或文本后，这里会显示处理进度。" compact />
+      ) : (
+        <div className="queue-list">
+          {taskQueue.map((task) => (
+            <div key={task.id} className={cx('queue-card', `queue-card-${task.status}`)}>
+              <div className="queue-card-title">
+                {task.title.length > 36 ? `${task.title.slice(0, 36)}...` : task.title}
+              </div>
+              <div className="queue-card-meta">
+                <span>{task.category}</span>
+                <StatusPill
+                  tone={
+                    task.status === 'completed'
+                      ? 'success'
+                      : task.status === 'failed'
+                        ? 'danger'
+                        : task.status === 'processing'
+                          ? 'info'
+                          : 'warning'
+                  }
+                >
+                  {TASK_STATUS_META[task.status]}
+                </StatusPill>
+              </div>
+              {task.error ? <div className="queue-error">{task.error}</div> : null}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
+  const renderChatSidebar = () => (
+    <div className="chat-shell">
+      <div className="chat-header">
+        <div className="sidebar-panel-header">
+          <div>
+            <div className="sidebar-title">对话助手</div>
+            <div className="sidebar-copy">基于知识库进行检索式问答。</div>
+          </div>
+          <Space>
+            <Button size="small" onClick={handleNewConversation}>
+              新建
+            </Button>
+            <Button size="small" onClick={() => setShowChatSidebar(false)}>
+              关闭
+            </Button>
+          </Space>
+        </div>
+
+        <div className="chat-filters">
+          <div className="field-group">
+            <label>历史会话</label>
+            <div className="conversation-list">
+              {chatConversations.length > 0 ? (
+                chatConversations.map((conversation) => (
+                  <div key={conversation.id} className="conversation-item">
+                    <Button
+                      type={conversation.id === currentChatId ? 'primary' : 'default'}
+                      onClick={() => loadChatConversation(conversation.id)}
+                      className="conversation-button"
+                    >
+                      {conversation.title}
+                    </Button>
+                    <Popconfirm
+                      title="删除这个会话？"
+                      onConfirm={() => handleDeleteConversation(conversation.id)}
+                      okText="删除"
+                      cancelText="取消"
+                    >
+                      <Button danger size="small">
+                        删
+                      </Button>
+                    </Popconfirm>
+                  </div>
+                ))
+              ) : (
+                <span className="muted-text">暂无历史会话</span>
+              )}
+            </div>
+          </div>
+
+          <div className="field-group">
+            <label>检索分类</label>
+            <Select
+              allowClear
+              value={selectedChatCategory || undefined}
+              placeholder="不过滤分类"
+              onChange={(value) => setSelectedChatCategory(value || '')}
+              options={categories.map((category) => ({ label: category, value: category }))}
+            />
+          </div>
+
+          <div className="field-group">
+            <label>检索标签</label>
+            <Select
+              mode="multiple"
+              allowClear
+              value={selectedChatTags}
+              placeholder="不过滤标签"
+              onChange={(value) => setSelectedChatTags(value)}
+              options={chatTagOptions.map((tag) => ({ label: tag, value: tag }))}
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="chat-messages" ref={messagesEndRef}>
+        {chatMessages.length === 0 ? (
+          <EmptyState icon="◎" title="开始与助手对话" description="问题会结合当前分类和标签筛选来回答。" compact />
+        ) : (
+          chatMessages.map((chatMessage) => (
+            <div
+              key={chatMessage.id}
+              className={cx(
+                'chat-row',
+                chatMessage.type === 'user' ? 'chat-row-user' : 'chat-row-ai',
+              )}
+            >
+              {chatMessage.type === 'ai' ? (
+                <QuestionCircleOutlined className="chat-avatar" />
+              ) : null}
+              <div className={cx('chat-bubble', chatMessage.type === 'user' && 'chat-bubble-user')}>
+                {chatMessage.loading ? (
+                  <div className="loading-inline">
+                    <Spin size="small" indicator={<LoadingOutlined spin />} />
+                    <span>助手正在思考...</span>
+                  </div>
+                ) : chatMessage.type === 'user' ? (
+                  <Typography.Text>{chatMessage.content}</Typography.Text>
+                ) : (
+                  <div className="markdown-body">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{chatMessage.content}</ReactMarkdown>
+                  </div>
+                )}
+              </div>
+              {chatMessage.type === 'user' ? <UserOutlined className="chat-avatar" /> : null}
+            </div>
+          ))
+        )}
+      </div>
+
+      <div className="chat-input-wrap">
+        <TextArea
+          value={chatInput}
+          onChange={(e) => setChatInput(e.target.value)}
+          placeholder="输入你的问题..."
+          rows={3}
+          onPressEnter={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              handleSendMessage();
+            }
+          }}
+        />
+        <Button
+          type="primary"
+          icon={<SendOutlined />}
+          onClick={handleSendMessage}
+          loading={isLoading}
+          disabled={isLoading || !chatInput.trim()}
+          block
+        >
+          发送
+        </Button>
+      </div>
+    </div>
+  );
+
+  return (
+    <Layout className="app-shell">
+      <Sider width={320} theme="light" className="left-rail">
+        <div className="brand-block">
+          <div className="brand-mark">KH</div>
+          <div>
+            <div className="brand-title">Knowledge Helper</div>
+            <div className="brand-copy">采集、整理、问答，一次完成。</div>
+          </div>
+        </div>
+
+        <div className="rail-section">
+          <div className="rail-section-title">输入来源</div>
+          <Select
+            size="large"
+            value={inputMode}
+            onChange={setInputMode}
+            options={[
+              { label: 'URL 链接', value: 'url' },
+              { label: '粘贴文本', value: 'text' },
+            ]}
+          />
+        </div>
+
+        <div className="rail-section">
+          <div className="rail-section-title">{inputMode === 'url' ? 'URL 地址' : '笔记文本'}</div>
+          {inputMode === 'url' ? (
+            <Input
+              placeholder="https://www.bilibili.com/..."
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              size="large"
+            />
+          ) : (
+            <TextArea
+              placeholder="直接粘贴你的笔记、摘要、会议记录或其他文本内容"
+              value={pastedText}
+              onChange={(e) => setPastedText(e.target.value)}
+              rows={8}
+            />
+          )}
+        </div>
+
+        <div className="rail-section">
+          <div className="rail-section-title">指定数据库类别</div>
+          <Select
+            placeholder="请选择类别"
+            size="large"
+            value={selectedCategory}
+            onChange={setSelectedCategory}
+            options={categories.map((category) => ({ label: category, value: category }))}
+            popupRender={(menu) => (
+              <>
+                {menu}
+                <Button
+                  type="text"
+                  icon={<PlusOutlined />}
+                  onClick={() => setAddCategoryModal(true)}
+                  className="add-category-button"
+                >
+                  添加新类别
+                </Button>
+              </>
+            )}
+          />
+        </div>
+
+        <div className="rail-section">
+          <div className="rail-section-title">提取模式</div>
+          <Select
+            size="large"
+            value={extractMode}
+            onChange={setExtractMode}
+            options={[
+              { label: '提取图文', value: 'text_and_images' },
+              { label: '只提取文字', value: 'text_only' },
+            ]}
+          />
+        </div>
+
+        <Button type="primary" size="large" onClick={handleStart} className="primary-action">
+          开始处理
+        </Button>
+
+        <div className="rail-divider" />
+
+        <div className="rail-actions">
+          <Button
+            size="large"
+            icon={<FolderOpenOutlined />}
+            onClick={() => setStatus('categories')}
+            className="secondary-action"
+          >
+            查看知识库
+          </Button>
+          <Button
+            size="large"
+            icon={<MessageOutlined />}
+            onClick={() => setShowChatSidebar((value) => !value)}
+            className="secondary-action"
+          >
+            对话助手
+          </Button>
+        </div>
+      </Sider>
+
+      <Layout className="main-layout">
+        <Content className="main-content">
+          {status === 'idle' && renderIdleContent()}
+          {status === 'processing' && renderProcessingContent()}
+          {confirmStatus === 'confirming' && renderProcessingContent()}
+          {status === 'reviewing' && currentResult && renderReviewContent()}
+          {status === 'categories' && renderCategoryContent()}
+          {status === 'knowledgeBase' && renderKnowledgeContent()}
+        </Content>
+      </Layout>
+
+      <div
+        className={cx('resize-handle', isResizing && 'resize-handle-active')}
+        onMouseDown={handleMouseDown}
+      />
+
+      <aside className="right-rail" style={{ width: sidebarWidth }} ref={sidebarRef}>
+        {showChatSidebar ? renderChatSidebar() : renderQueueSidebar()}
+      </aside>
+
       <Modal
         title="添加新类别"
         open={addCategoryModal}
@@ -1554,7 +1471,6 @@ const DataManagerPage = () => {
       </Modal>
     </Layout>
   );
+}
 
-};
-
-export default DataManagerPage;
+export default App;
