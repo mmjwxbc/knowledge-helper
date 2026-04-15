@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { startTransition, useCallback, useDeferredValue, useEffect, useRef, useState } from 'react';
 import {
   Button,
   Card,
@@ -11,22 +11,44 @@ import {
   Select,
   Space,
   Spin,
+  Tooltip,
   Typography,
   message,
 } from 'antd';
 import {
+  BookOutlined,
   CheckCircleOutlined,
+  CloseOutlined,
+  CopyOutlined,
   DeleteOutlined,
+  ExperimentOutlined,
   FolderOpenOutlined,
+  FileTextOutlined,
+  GlobalOutlined,
+  ReadOutlined,
   LoadingOutlined,
   MessageOutlined,
+  PaperClipOutlined,
   PlusOutlined,
   QuestionCircleOutlined,
+  SearchOutlined,
+  SettingOutlined,
   SendOutlined,
+  StopOutlined,
+  TagsOutlined,
+  ToolOutlined,
   UserOutlined,
 } from '@ant-design/icons';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import Prism from 'prismjs';
+import 'prismjs/components/prism-bash';
+import 'prismjs/components/prism-javascript';
+import 'prismjs/components/prism-jsx';
+import 'prismjs/components/prism-json';
+import 'prismjs/components/prism-markdown';
+import 'prismjs/components/prism-python';
+import 'prismjs/themes/prism-tomorrow.css';
 import './App.css';
 
 const { Sider, Content } = Layout;
@@ -55,6 +77,48 @@ const normalizeTagList = (tags) =>
   );
 
 const cx = (...parts) => parts.filter(Boolean).join(' ');
+
+const COLLAPSED_CODE_HEIGHT = 260;
+
+const getCodeLanguage = (className = '') => {
+  const match = /language-([\w-]+)/.exec(className);
+  return match?.[1]?.toLowerCase() || 'text';
+};
+
+const getHighlightedCode = (code, language) => {
+  const normalizedLanguage =
+    language === 'sh' || language === 'shell' ? 'bash' : language === 'py' ? 'python' : language;
+  const grammar = Prism.languages[normalizedLanguage];
+  return grammar
+    ? Prism.highlight(code, grammar, normalizedLanguage)
+    : code
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;');
+};
+
+const CATEGORY_TILE_THEMES = [
+  'slate',
+  'sage',
+  'amber',
+  'sky',
+  'rose',
+  'stone',
+];
+
+const CATEGORY_ICON_RULES = [
+  { pattern: /(技术|开发|编程|代码|前端|后端|软件|工程)/i, icon: ToolOutlined },
+  { pattern: /(文档|资料|笔记|写作|文章|论文)/i, icon: FileTextOutlined },
+  { pattern: /(产品|运营|增长|营销|品牌)/i, icon: GlobalOutlined },
+  { pattern: /(学习|教育|课程|知识|读书)/i, icon: ReadOutlined },
+  { pattern: /(标签|分类|整理|归档)/i, icon: TagsOutlined },
+  { pattern: /(研究|实验|测试|分析|数据)/i, icon: ExperimentOutlined },
+];
+
+const getCategoryIcon = (category) => {
+  const match = CATEGORY_ICON_RULES.find(({ pattern }) => pattern.test(category));
+  return match?.icon || BookOutlined;
+};
 
 const STATUS_META = {
   idle: { label: '待开始', tone: 'neutral' },
@@ -108,6 +172,81 @@ function StatCard({ label, value, hint }) {
   );
 }
 
+function CodeBlock({ className, inline, children, ...props }) {
+  const rawCode = String(children).replace(/\n$/, '');
+  const language = getCodeLanguage(className);
+  const lineCount = rawCode.split('\n').length;
+  const collapsible = lineCount > 12 || rawCode.length > 520;
+  const [expanded, setExpanded] = useState(!collapsible);
+
+  if (inline) {
+    return (
+      <code className="inline-code" {...props}>
+        {children}
+      </code>
+    );
+  }
+
+  const highlightedCode = getHighlightedCode(rawCode, language);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(rawCode);
+      message.success('代码已复制');
+    } catch {
+      message.error('复制失败');
+    }
+  };
+
+  return (
+    <div className="code-block-shell">
+      <div className="code-block-toolbar">
+        <span className="code-language">{language}</span>
+        <Space size={8}>
+          {collapsible ? (
+            <Button size="small" type="text" onClick={() => setExpanded((value) => !value)}>
+              {expanded ? '收起' : '展开'}
+            </Button>
+          ) : null}
+          <Tooltip title="复制代码">
+            <Button size="small" type="text" icon={<CopyOutlined />} onClick={handleCopy} />
+          </Tooltip>
+        </Space>
+      </div>
+      <div
+        className={cx('code-block-body', !expanded && 'code-block-collapsed')}
+        style={!expanded ? { maxHeight: COLLAPSED_CODE_HEIGHT } : undefined}
+      >
+        <pre className={cx(className, 'code-block-pre')}>
+          <code dangerouslySetInnerHTML={{ __html: highlightedCode }} {...props} />
+        </pre>
+      </div>
+    </div>
+  );
+}
+
+function MarkdownMessage({ content }) {
+  return (
+    <div className="markdown-body">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          code({ className, children, ...props }) {
+            const inline = !className && !String(children).includes('\n');
+            return (
+              <CodeBlock className={className} inline={inline} {...props}>
+                {children}
+              </CodeBlock>
+            );
+          },
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
+}
+
 function App() {
   const [categories, setCategories] = useState([]);
   const [reviewTagOptions, setReviewTagOptions] = useState([]);
@@ -139,6 +278,8 @@ function App() {
   const [selectedChatTags, setSelectedChatTags] = useState([]);
   const [chatTagOptions, setChatTagOptions] = useState([]);
   const [showChatSidebar, setShowChatSidebar] = useState(false);
+  const [chatSearch, setChatSearch] = useState('');
+  const [showAllKnowledgeTags, setShowAllKnowledgeTags] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(380);
   const [isResizing, setIsResizing] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -146,14 +287,12 @@ function App() {
 
   const messagesEndRef = useRef(null);
   const sidebarRef = useRef(null);
+  const chatAbortControllerRef = useRef(null);
+  const deferredChatSearch = useDeferredValue(chatSearch.trim().toLowerCase());
 
   useEffect(() => {
     fetchCategories();
     fetchTagsForReview();
-  }, []);
-
-  useEffect(() => {
-    fetchChatConversations();
   }, []);
 
   useEffect(() => {
@@ -261,7 +400,8 @@ function App() {
     }
   };
 
-  const loadChatConversation = useCallback(async (conversationId) => {
+  const loadChatConversation = useCallback(async (conversationId, options = {}) => {
+    const { openPanel = true } = options;
     try {
       const response = await fetch(`${API_BASE}/chat/conversations/${conversationId}`);
       if (!response.ok) throw new Error('加载会话失败');
@@ -270,7 +410,9 @@ function App() {
       setChatMessages(data.messages || []);
       setSelectedChatCategory(data.category || '');
       setSelectedChatTags(data.tags || []);
-      setShowChatSidebar(true);
+      if (openPanel) {
+        setShowChatSidebar(true);
+      }
     } catch (error) {
       console.error('Failed to load chat conversation:', error);
       message.error('加载会话失败');
@@ -285,12 +427,16 @@ function App() {
       setChatConversations(conversations);
 
       if (!currentChatId && conversations.length > 0) {
-        await loadChatConversation(conversations[0].id);
+        await loadChatConversation(conversations[0].id, { openPanel: false });
       }
     } catch (error) {
       console.error('Failed to fetch chat conversations:', error);
     }
   }, [currentChatId, loadChatConversation]);
+
+  useEffect(() => {
+    fetchChatConversations();
+  }, [fetchChatConversations]);
 
   const saveChatConversation = async (conversationId, messagesToSave, category = '', tags = []) => {
     if (!conversationId || !messagesToSave || messagesToSave.length === 0) return;
@@ -310,7 +456,9 @@ function App() {
       if (data.status === 'success') {
         const listResponse = await fetch(`${API_BASE}/chat/conversations`);
         const listData = await listResponse.json();
-        setChatConversations(listData.conversations || []);
+        startTransition(() => {
+          setChatConversations(listData.conversations || []);
+        });
       }
     } catch (error) {
       console.error('Failed to save chat conversation:', error);
@@ -388,6 +536,9 @@ function App() {
   const sortedKnowledgeTags = Object.entries(knowledgeTagStats)
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'zh-CN'))
     .map(([tag, count]) => ({ tag, count }));
+  const visibleKnowledgeTags = showAllKnowledgeTags
+    ? sortedKnowledgeTags
+    : sortedKnowledgeTags.slice(0, 12);
 
   const fetchVaultData = async () => {
     await fetchVaultDataByCategory();
@@ -730,6 +881,8 @@ function App() {
     setChatMessages((prev) => [...prev, userMessage]);
     setChatInput('');
     setIsLoading(true);
+    const controller = new AbortController();
+    chatAbortControllerRef.current = controller;
 
     try {
       const historyForRequest = chatMessages
@@ -739,6 +892,7 @@ function App() {
       const response = await fetch(`${API_BASE}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify({
           message: nextInput,
           referenced_ids: [],
@@ -803,12 +957,31 @@ function App() {
         selectedChatTags,
       );
     } catch (error) {
+      if (error.name === 'AbortError') {
+        setChatMessages((prev) =>
+          prev.map((msg) =>
+            msg.loading ? { ...msg, loading: false, content: msg.content || '已停止生成。' } : msg,
+          ),
+        );
+        return;
+      }
       console.error('发送消息失败:', error);
       message.error('发送消息失败，请检查网络连接');
       setChatMessages((prev) => prev.slice(0, -1));
     } finally {
+      chatAbortControllerRef.current = null;
       setIsLoading(false);
     }
+  };
+
+  const handleStopGeneration = () => {
+    chatAbortControllerRef.current?.abort();
+  };
+
+  const handleClearContext = () => {
+    setChatMessages([]);
+    setChatInput('');
+    message.success('当前上下文已清空');
   };
 
   const handleMouseDown = (e) => {
@@ -822,6 +995,13 @@ function App() {
       : 0;
 
   const statusMeta = STATUS_META[status] || STATUS_META.idle;
+  const filteredConversations = chatConversations.filter((conversation) => {
+    if (!deferredChatSearch) return true;
+    const title = conversation.title?.toLowerCase() || '';
+    const category = conversation.category?.toLowerCase() || '';
+    const tags = (conversation.tags || []).join(' ').toLowerCase();
+    return `${title} ${category} ${tags}`.includes(deferredChatSearch);
+  });
 
   const renderIdleContent = () => (
     <div className="main-stack">
@@ -1019,22 +1199,29 @@ function App() {
         aside={<StatusPill tone="neutral">{categories.length} 个分类</StatusPill>}
       />
       <div className="category-grid">
-        {categories.map((category) => (
-          <button
-            key={category}
-            type="button"
-            className="category-tile"
-            onClick={() => {
-              setSelectedCategory(category);
-              fetchVaultDataByCategory(category);
-              setStatus('knowledgeBase');
-            }}
-          >
-            <div className="category-tile-icon">□</div>
-            <div className="category-tile-name">{category}</div>
-            <div className="category-tile-hint">进入该分类</div>
-          </button>
-        ))}
+        {categories.map((category, index) => {
+          const theme = CATEGORY_TILE_THEMES[index % CATEGORY_TILE_THEMES.length];
+          const CategoryIcon = getCategoryIcon(category);
+
+          return (
+            <button
+              key={category}
+              type="button"
+              className={cx('category-tile', `category-tile-${theme}`)}
+              onClick={() => {
+                setSelectedCategory(category);
+                fetchVaultDataByCategory(category);
+                setStatus('knowledgeBase');
+              }}
+            >
+              <div className="category-tile-icon-wrap">
+                <CategoryIcon className="category-tile-icon" />
+              </div>
+              <div className="category-tile-name">{category}</div>
+              <div className="category-tile-hint">进入该分类</div>
+            </button>
+          );
+        })}
       </div>
       <div className="inline-actions">
         <Button onClick={fetchCategories} className="ghost-button">
@@ -1070,6 +1257,14 @@ function App() {
             <div className="surface-emphasis">{sortedKnowledgeTags.length} 个标签</div>
           </div>
           <Space wrap>
+            {sortedKnowledgeTags.length > 12 ? (
+              <Button
+                onClick={() => setShowAllKnowledgeTags((value) => !value)}
+                className="ghost-button"
+              >
+                {showAllKnowledgeTags ? '收起标签' : `展开标签 +${sortedKnowledgeTags.length - 12}`}
+              </Button>
+            ) : null}
             <Button onClick={() => fetchVaultDataByCategory(selectedCategory)} className="ghost-button">
               刷新
             </Button>
@@ -1080,7 +1275,7 @@ function App() {
         </div>
         <div className="tag-row">
           {sortedKnowledgeTags.length > 0 ? (
-            sortedKnowledgeTags.map(({ tag, count }) => (
+            visibleKnowledgeTags.map(({ tag, count }) => (
               <span key={tag} className="tag-chip">
                 <span>{tag}</span>
                 <strong>{count}</strong>
@@ -1137,7 +1332,9 @@ function App() {
                   </Popconfirm>
                 </div>
                 {expandedCards.has(item.id) ? (
-                  <div className="answer-block answer-block-plain">{item.answer}</div>
+                  <div className="answer-block answer-block-markdown">
+                    <MarkdownMessage content={item.answer || ''} />
+                  </div>
                 ) : null}
               </button>
             </Card>
@@ -1191,138 +1388,208 @@ function App() {
   );
 
   const renderChatSidebar = () => (
-    <div className="chat-shell">
-      <div className="chat-header">
-        <div className="sidebar-panel-header">
-          <div>
-            <div className="sidebar-title">对话助手</div>
-            <div className="sidebar-copy">基于知识库进行检索式问答。</div>
+    <div className="chat-workspace-overlay">
+      <div className="chat-workspace">
+        <aside className="chat-conversation-drawer">
+          <div className="chat-drawer-header">
+            <div>
+              <div className="chat-drawer-title">对话助手</div>
+              <div className="chat-drawer-copy">检索、追问和代码解读集中在这里。</div>
+            </div>
+            <Space size={8}>
+              <Tooltip title="新建会话">
+                <Button type="text" icon={<PlusOutlined />} onClick={handleNewConversation} />
+              </Tooltip>
+              <Tooltip title="设置">
+                <Button type="text" icon={<SettingOutlined />} />
+              </Tooltip>
+            </Space>
           </div>
-          <Space>
-            <Button size="small" onClick={handleNewConversation}>
-              新建
-            </Button>
-            <Button size="small" onClick={() => setShowChatSidebar(false)}>
-              关闭
-            </Button>
-          </Space>
-        </div>
 
-        <div className="chat-filters">
-          <div className="field-group">
-            <label>历史会话</label>
-            <div className="conversation-list">
-              {chatConversations.length > 0 ? (
-                chatConversations.map((conversation) => (
-                  <div key={conversation.id} className="conversation-item">
+          <Input
+            value={chatSearch}
+            onChange={(e) => setChatSearch(e.target.value)}
+            placeholder="搜索历史会话"
+            prefix={<SearchOutlined />}
+            className="chat-search-input"
+          />
+
+          <div className="conversation-list">
+            {filteredConversations.length > 0 ? (
+              filteredConversations.map((conversation) => (
+                <div
+                  key={conversation.id}
+                  className={cx(
+                    'conversation-card',
+                    conversation.id === currentChatId && 'conversation-card-active',
+                  )}
+                  onClick={() => loadChatConversation(conversation.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      loadChatConversation(conversation.id);
+                    }
+                  }}
+                  role="button"
+                  tabIndex={0}
+                >
+                  <div className="conversation-accent" />
+                  <div className="conversation-card-body">
+                    <div className="conversation-card-title">{conversation.title}</div>
+                    {conversation.updated_at ? (
+                      <div className="conversation-card-meta">{conversation.updated_at}</div>
+                    ) : null}
+                  </div>
+                  <Popconfirm
+                    title="删除这个会话？"
+                    onConfirm={() => handleDeleteConversation(conversation.id)}
+                    okText="删除"
+                    cancelText="取消"
+                  >
                     <Button
-                      type={conversation.id === currentChatId ? 'primary' : 'default'}
-                      onClick={() => loadChatConversation(conversation.id)}
-                      className="conversation-button"
-                    >
-                      {conversation.title}
-                    </Button>
-                    <Popconfirm
-                      title="删除这个会话？"
-                      onConfirm={() => handleDeleteConversation(conversation.id)}
-                      okText="删除"
-                      cancelText="取消"
-                    >
-                      <Button danger size="small">
-                        删
-                      </Button>
-                    </Popconfirm>
-                  </div>
-                ))
-              ) : (
-                <span className="muted-text">暂无历史会话</span>
-              )}
+                      type="text"
+                      size="small"
+                      icon={<DeleteOutlined />}
+                      className="conversation-delete-button"
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  </Popconfirm>
+                </div>
+              ))
+            ) : (
+              <EmptyState
+                icon="⌕"
+                title="没有匹配的会话"
+                description="换一个关键词，或直接开始一个新问题。"
+                compact
+              />
+            )}
+          </div>
+        </aside>
+
+        <section className="chat-main-panel">
+          <div className="chat-topbar">
+            <div className="chat-topbar-title">
+              <div className="chat-panel-title">当前会话</div>
+              <div className="chat-panel-subtitle">输入框固定底部，消息区域独立滚动。</div>
+            </div>
+            <div className="chat-toolbar">
+              <Select
+                size="small"
+                allowClear
+                value={selectedChatCategory || undefined}
+                placeholder="分类"
+                onChange={(value) => setSelectedChatCategory(value || '')}
+                options={categories.map((category) => ({ label: category, value: category }))}
+                className="chat-toolbar-select"
+              />
+              <Select
+                size="small"
+                mode="multiple"
+                allowClear
+                value={selectedChatTags}
+                placeholder="标签"
+                onChange={(value) => setSelectedChatTags(value)}
+                options={chatTagOptions.map((tag) => ({ label: tag, value: tag }))}
+                className="chat-toolbar-select chat-toolbar-tags"
+                maxTagCount="responsive"
+              />
+              <Tooltip title="关闭助手">
+                <Button
+                  type="text"
+                  icon={<CloseOutlined />}
+                  onClick={() => setShowChatSidebar(false)}
+                />
+              </Tooltip>
             </div>
           </div>
 
-          <div className="field-group">
-            <label>检索分类</label>
-            <Select
-              allowClear
-              value={selectedChatCategory || undefined}
-              placeholder="不过滤分类"
-              onChange={(value) => setSelectedChatCategory(value || '')}
-              options={categories.map((category) => ({ label: category, value: category }))}
-            />
-          </div>
-
-          <div className="field-group">
-            <label>检索标签</label>
-            <Select
-              mode="multiple"
-              allowClear
-              value={selectedChatTags}
-              placeholder="不过滤标签"
-              onChange={(value) => setSelectedChatTags(value)}
-              options={chatTagOptions.map((tag) => ({ label: tag, value: tag }))}
-            />
-          </div>
-        </div>
-      </div>
-
-      <div className="chat-messages" ref={messagesEndRef}>
-        {chatMessages.length === 0 ? (
-          <EmptyState icon="◎" title="开始与助手对话" description="问题会结合当前分类和标签筛选来回答。" compact />
-        ) : (
-          chatMessages.map((chatMessage) => (
-            <div
-              key={chatMessage.id}
-              className={cx(
-                'chat-row',
-                chatMessage.type === 'user' ? 'chat-row-user' : 'chat-row-ai',
-              )}
-            >
-              {chatMessage.type === 'ai' ? (
-                <QuestionCircleOutlined className="chat-avatar" />
-              ) : null}
-              <div className={cx('chat-bubble', chatMessage.type === 'user' && 'chat-bubble-user')}>
-                {chatMessage.loading ? (
-                  <div className="loading-inline">
-                    <Spin size="small" indicator={<LoadingOutlined spin />} />
-                    <span>助手正在思考...</span>
-                  </div>
-                ) : chatMessage.type === 'user' ? (
-                  <Typography.Text>{chatMessage.content}</Typography.Text>
-                ) : (
-                  <div className="markdown-body">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{chatMessage.content}</ReactMarkdown>
-                  </div>
-                )}
+          <div className="chat-messages" ref={messagesEndRef}>
+            {chatMessages.length === 0 ? (
+              <div className="chat-empty-hero">
+                <div className="chat-empty-kicker">Knowledge Chat</div>
+                <h2>像 ChatGPT 一样把注意力留给对话本身。</h2>
+                <p>历史会话放到左侧，分类与标签收进工具栏，长答案和代码块现在都能更顺畅地阅读。</p>
               </div>
-              {chatMessage.type === 'user' ? <UserOutlined className="chat-avatar" /> : null}
-            </div>
-          ))
-        )}
-      </div>
+            ) : (
+              chatMessages.map((chatMessage) => (
+                <div
+                  key={chatMessage.id}
+                  className={cx(
+                    'chat-row',
+                    chatMessage.type === 'user' ? 'chat-row-user' : 'chat-row-ai',
+                  )}
+                >
+                  {chatMessage.type === 'ai' ? (
+                    <QuestionCircleOutlined className="chat-avatar" />
+                  ) : null}
+                  <div
+                    className={cx('chat-bubble', chatMessage.type === 'user' && 'chat-bubble-user')}
+                  >
+                    {chatMessage.loading ? (
+                      <div className="loading-inline">
+                        <Spin size="small" indicator={<LoadingOutlined spin />} />
+                        <span>助手正在思考...</span>
+                      </div>
+                    ) : chatMessage.type === 'user' ? (
+                      <Typography.Text>{chatMessage.content}</Typography.Text>
+                    ) : (
+                      <MarkdownMessage content={chatMessage.content} />
+                    )}
+                  </div>
+                  {chatMessage.type === 'user' ? <UserOutlined className="chat-avatar" /> : null}
+                </div>
+              ))
+            )}
+          </div>
 
-      <div className="chat-input-wrap">
-        <TextArea
-          value={chatInput}
-          onChange={(e) => setChatInput(e.target.value)}
-          placeholder="输入你的问题..."
-          rows={3}
-          onPressEnter={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              handleSendMessage();
-            }
-          }}
-        />
-        <Button
-          type="primary"
-          icon={<SendOutlined />}
-          onClick={handleSendMessage}
-          loading={isLoading}
-          disabled={isLoading || !chatInput.trim()}
-          block
-        >
-          发送
-        </Button>
+          <div className="chat-composer-wrap">
+            <div className="chat-quick-actions">
+              <Tooltip title="上传附件（待接入）">
+                <Button type="text" icon={<PaperClipOutlined />} disabled />
+              </Tooltip>
+              <Tooltip title="切换模型（待接入）">
+                <Button type="text" icon={<SettingOutlined />} disabled />
+              </Tooltip>
+              <Tooltip title="清空上下文">
+                <Button type="text" icon={<DeleteOutlined />} onClick={handleClearContext} />
+              </Tooltip>
+              <Tooltip title="终止生成">
+                <Button
+                  type="text"
+                  icon={<StopOutlined />}
+                  onClick={handleStopGeneration}
+                  disabled={!isLoading}
+                />
+              </Tooltip>
+            </div>
+
+            <div className="chat-input-wrap">
+              <TextArea
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                placeholder="输入你的问题，按 Enter 发送，Shift + Enter 换行"
+                autoSize={{ minRows: 1, maxRows: 8 }}
+                className="chat-composer-input"
+                onPressEnter={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSendMessage();
+                  }
+                }}
+              />
+              <Button
+                type="primary"
+                shape="circle"
+                icon={<SendOutlined />}
+                onClick={handleSendMessage}
+                loading={isLoading}
+                disabled={isLoading || !chatInput.trim()}
+                className="chat-send-button"
+              />
+            </div>
+          </div>
+        </section>
       </div>
     </div>
   );
@@ -1444,14 +1711,20 @@ function App() {
         </Content>
       </Layout>
 
-      <div
-        className={cx('resize-handle', isResizing && 'resize-handle-active')}
-        onMouseDown={handleMouseDown}
-      />
+      {!showChatSidebar ? (
+        <>
+          <div
+            className={cx('resize-handle', isResizing && 'resize-handle-active')}
+            onMouseDown={handleMouseDown}
+          />
 
-      <aside className="right-rail" style={{ width: sidebarWidth }} ref={sidebarRef}>
-        {showChatSidebar ? renderChatSidebar() : renderQueueSidebar()}
-      </aside>
+          <aside className="right-rail" style={{ width: sidebarWidth }} ref={sidebarRef}>
+            {renderQueueSidebar()}
+          </aside>
+        </>
+      ) : null}
+
+      {showChatSidebar ? renderChatSidebar() : null}
 
       <Modal
         title="添加新类别"
