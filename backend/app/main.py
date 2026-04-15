@@ -74,6 +74,7 @@ class ChatInput(BaseModel):
     referenced_ids: Optional[List[int]] = None
     category: Optional[str] = None
     tags: Optional[List[str]] = None
+    history: Optional[List[Dict[str, Any]]] = None
 
 class ChatConversationInput(BaseModel):
     id: str
@@ -397,6 +398,7 @@ async def chat(input: ChatInput):
             referenced_ids=input.referenced_ids,
             category=input.category,
             tags=input.tags,
+            history=input.history,
         ),
         media_type="text/event-stream"
     )

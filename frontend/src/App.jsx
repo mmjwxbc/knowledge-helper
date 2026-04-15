@@ -657,6 +657,13 @@ const DataManagerPage = () => {
     setIsLoading(true);
 
     try {
+      const historyForRequest = chatMessages
+        .filter((msg) => !msg.loading)
+        .map((msg) => ({
+          type: msg.type,
+          content: msg.content
+        }));
+
       const response = await fetch(`${API_BASE}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -665,6 +672,7 @@ const DataManagerPage = () => {
           referenced_ids: [],
           category: selectedChatCategory || null,
           tags: selectedChatTags,
+          history: historyForRequest,
         }),
       });
 

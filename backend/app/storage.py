@@ -1,6 +1,6 @@
 import json
-from typing import List, Optional
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, func
+from typing import List, Optional, Dict, Any
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, func, text
 from sqlalchemy.orm import sessionmaker, declarative_base
 import chromadb
 from langchain_openai import OpenAIEmbeddings
@@ -419,5 +419,48 @@ async def delete_chat_conversation(conversation_id: str):
     except Exception:
         db.rollback()
         return False
+    finally:
+        db.close()
+
+async def get_retrieval_metadata() -> Dict[str, Any]:
+    """
+    Get metadata and schema hints for read-only SQL generation.
+    """
+    categories = await get_categories()
+    tags = await get_all_tags()
+    return {
+        "categories": categories,
+        "tags": tags,
+        "tables": {
+            "knowledge_items": [
+                "id INTEGER",
+                "question STRING",
+                "answer TEXT",
+                "tags JSON_STRING",
+                "category STRING",
+                "created_at DATETIME",
+                "status STRING",
+            ],
+            "chat_conversations": [
+                "id STRING",
+                "title STRING",
+                "category STRING",
+                "tags JSON_STRING",
+                "messages JSON_STRING",
+                "created_at DATETIME",
+                "updated_at DATETIME",
+            ],
+        },
+    }
+
+async def execute_readonly_sql(sql: str, limit: int = 200) -> List[Dict[str, Any]]:
+    """
+    Execute a validated read-only SQL query against SQLite.
+    """
+    db = SessionLocal()
+    try:
+        result = db.execute(text(sql))
+        rows = result.mappings().fetchmany(limit)
+        return [dict(row) for row in rows]
     finally:
         db.close()
