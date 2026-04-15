@@ -27,6 +27,16 @@ class KnowledgeCategory(Base):
     name = Column(String, unique=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+class ChatConversation(Base):
+    __tablename__ = "chat_conversations"
+    id = Column(String, primary_key=True, index=True)
+    title = Column(String, nullable=False)
+    category = Column(String, nullable=True)
+    tags = Column(String, default="[]")
+    messages = Column(Text, default="[]")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
 Base.metadata.create_all(bind=engine)
 
 # ChromaDB setup (Vector DB)
@@ -300,6 +310,111 @@ async def delete_vault_item_data(item_id: str):
             print(f"Error deleting from ChromaDB: {str(e)}")
             # Continue even if ChromaDB delete fails
         
+        return True
+    except Exception:
+        db.rollback()
+        return False
+    finally:
+        db.close()
+
+async def list_chat_conversations():
+    """
+    List saved chat conversations.
+    """
+    db = SessionLocal()
+    try:
+        conversations = (
+            db.query(ChatConversation)
+            .order_by(ChatConversation.updated_at.desc(), ChatConversation.created_at.desc())
+            .all()
+        )
+        return [
+            {
+                "id": conversation.id,
+                "title": conversation.title,
+                "category": conversation.category,
+                "tags": json.loads(conversation.tags or "[]"),
+                "created_at": conversation.created_at.isoformat() if conversation.created_at else None,
+                "updated_at": conversation.updated_at.isoformat() if conversation.updated_at else None,
+            }
+            for conversation in conversations
+        ]
+    finally:
+        db.close()
+
+async def get_chat_conversation(conversation_id: str):
+    """
+    Get a single saved chat conversation.
+    """
+    db = SessionLocal()
+    try:
+        conversation = db.query(ChatConversation).filter(ChatConversation.id == conversation_id).first()
+        if not conversation:
+            return None
+        return {
+            "id": conversation.id,
+            "title": conversation.title,
+            "category": conversation.category,
+            "tags": json.loads(conversation.tags or "[]"),
+            "messages": json.loads(conversation.messages or "[]"),
+            "created_at": conversation.created_at.isoformat() if conversation.created_at else None,
+            "updated_at": conversation.updated_at.isoformat() if conversation.updated_at else None,
+        }
+    finally:
+        db.close()
+
+async def upsert_chat_conversation(
+    conversation_id: str,
+    title: str,
+    messages: List[dict],
+    category: Optional[str] = None,
+    tags: Optional[List[str]] = None,
+):
+    """
+    Create or update a saved chat conversation.
+    """
+    db = SessionLocal()
+    try:
+        conversation = db.query(ChatConversation).filter(ChatConversation.id == conversation_id).first()
+        serialized_tags = json.dumps(tags or [], ensure_ascii=False)
+        serialized_messages = json.dumps(messages or [], ensure_ascii=False)
+
+        if conversation:
+            conversation.title = title
+            conversation.category = category
+            conversation.tags = serialized_tags
+            conversation.messages = serialized_messages
+        else:
+            conversation = ChatConversation(
+                id=conversation_id,
+                title=title,
+                category=category,
+                tags=serialized_tags,
+                messages=serialized_messages,
+            )
+            db.add(conversation)
+
+        db.commit()
+        db.refresh(conversation)
+        return True
+    except Exception as e:
+        print(f"Error saving chat conversation: {str(e)}")
+        db.rollback()
+        return False
+    finally:
+        db.close()
+
+async def delete_chat_conversation(conversation_id: str):
+    """
+    Delete a saved chat conversation.
+    """
+    db = SessionLocal()
+    try:
+        conversation = db.query(ChatConversation).filter(ChatConversation.id == conversation_id).first()
+        if not conversation:
+            return False
+        db.delete(conversation)
+        db.commit()
         return True
     except Exception:
         db.rollback()

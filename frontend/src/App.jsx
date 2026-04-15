@@ -6,6 +6,12 @@ import remarkGfm from 'remark-gfm';
 
 const { Sider, Content } = Layout;
 const API_BASE = 'http://localhost:8000/api';
+const generateChatConversationId = () => `chat_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+const buildConversationTitle = (messages) => {
+  const firstUserMessage = (messages || []).find((msg) => msg.type === 'user' && msg.content?.trim());
+  if (!firstUserMessage) return '新对话';
+  return firstUserMessage.content.trim().slice(0, 30) || '新对话';
+};
 
 const DataManagerPage = () => {
   const [categories, setCategories] = useState([]);
@@ -35,6 +41,8 @@ const DataManagerPage = () => {
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [chatConversations, setChatConversations] = useState([]);
+  const [currentChatId, setCurrentChatId] = useState('');
   const [selectedChatCategory, setSelectedChatCategory] = useState('');
   const [selectedChatTags, setSelectedChatTags] = useState([]);
   const [chatTagOptions, setChatTagOptions] = useState([]);
@@ -48,6 +56,7 @@ const DataManagerPage = () => {
   useEffect(() => {
     fetchCategories();
     fetchTagsForReview();
+    fetchChatConversations();
   }, []);
 
   useEffect(() => {
@@ -63,6 +72,11 @@ const DataManagerPage = () => {
     fetchTagsForChat(selectedChatCategory);
     setSelectedChatTags([]);
   }, [selectedChatCategory]);
+
+  useEffect(() => {
+    if (chatMessages.length === 0 || isLoading || !currentChatId) return;
+    saveChatConversation(currentChatId, chatMessages, selectedChatCategory, selectedChatTags);
+  }, [chatMessages, currentChatId, selectedChatCategory, selectedChatTags, isLoading]);
 
   // 获取知识库数据（根据类别）
   const fetchVaultDataByCategory = async (category = null) => {
@@ -119,6 +133,98 @@ const DataManagerPage = () => {
       }
     } catch (error) {
       console.error('Failed to fetch chat tags:', error);
+    }
+  };
+
+  const fetchChatConversations = async () => {
+    try {
+      const response = await fetch(`${API_BASE}/chat/conversations`);
+      const data = await response.json();
+      const conversations = data.conversations || [];
+      setChatConversations(conversations);
+
+      if (!currentChatId && conversations.length > 0) {
+        await loadChatConversation(conversations[0].id);
+      }
+    } catch (error) {
+      console.error('Failed to fetch chat conversations:', error);
+    }
+  };
+
+  const loadChatConversation = async (conversationId) => {
+    try {
+      const response = await fetch(`${API_BASE}/chat/conversations/${conversationId}`);
+      if (!response.ok) {
+        throw new Error('加载会话失败');
+      }
+      const data = await response.json();
+      setCurrentChatId(data.id);
+      setChatMessages(data.messages || []);
+      setSelectedChatCategory(data.category || '');
+      setSelectedChatTags(data.tags || []);
+      setShowChatSidebar(true);
+    } catch (error) {
+      console.error('Failed to load chat conversation:', error);
+      message.error('加载会话失败');
+    }
+  };
+
+  const saveChatConversation = async (conversationId, messages, category = '', tags = []) => {
+    if (!conversationId || !messages || messages.length === 0) return;
+    try {
+      const response = await fetch(`${API_BASE}/chat/conversations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: conversationId,
+          title: buildConversationTitle(messages),
+          messages,
+          category: category || null,
+          tags,
+        }),
+      });
+      const data = await response.json();
+      if (data.status === 'success') {
+        const listResponse = await fetch(`${API_BASE}/chat/conversations`);
+        const listData = await listResponse.json();
+        setChatConversations(listData.conversations || []);
+      }
+    } catch (error) {
+      console.error('Failed to save chat conversation:', error);
+    }
+  };
+
+  const handleNewConversation = () => {
+    setCurrentChatId(generateChatConversationId());
+    setChatMessages([]);
+    setChatInput('');
+    setSelectedChatCategory('');
+    setSelectedChatTags([]);
+    setShowChatSidebar(true);
+  };
+
+  const handleDeleteConversation = async (conversationId) => {
+    try {
+      const response = await fetch(`${API_BASE}/chat/conversations/${conversationId}`, {
+        method: 'DELETE',
+      });
+      const data = await response.json();
+      if (data.success) {
+        const remainingConversations = chatConversations.filter((item) => item.id !== conversationId);
+        setChatConversations(remainingConversations);
+        if (currentChatId === conversationId) {
+          if (remainingConversations.length > 0) {
+            await loadChatConversation(remainingConversations[0].id);
+          } else {
+            handleNewConversation();
+          }
+        }
+      } else {
+        message.error('删除会话失败');
+      }
+    } catch (error) {
+      console.error('Failed to delete conversation:', error);
+      message.error('删除会话失败');
     }
   };
 
@@ -535,6 +641,10 @@ const DataManagerPage = () => {
   // 发送聊天消息
   const handleSendMessage = async () => {
     if (!chatInput.trim()) return;
+    const conversationId = currentChatId || generateChatConversationId();
+    if (!currentChatId) {
+      setCurrentChatId(conversationId);
+    }
 
     const userMessage = {
       id: Date.now(),
@@ -590,7 +700,7 @@ const DataManagerPage = () => {
                 const data = JSON.parse(dataStr);
                 if (data.content) {
                   aiMessageContent += data.content;
-                  setChatMessages(prev => prev.map(msg => 
+                  setChatMessages(prev => prev.map(msg =>
                     msg.id === aiMessageId ? { ...msg, content: aiMessageContent, loading: false } : msg
                   ));
                 }
@@ -601,6 +711,18 @@ const DataManagerPage = () => {
           }
         }
       }
+
+      const finalMessages = [
+        ...chatMessages,
+        userMessage,
+        {
+          id: aiMessageId,
+          content: aiMessageContent,
+          type: 'ai',
+          loading: false
+        }
+      ];
+      await saveChatConversation(conversationId, finalMessages, selectedChatCategory, selectedChatTags);
     } catch (error) {
       console.error('发送消息失败:', error);
       message.error('发送消息失败，请检查网络连接');
@@ -1230,9 +1352,51 @@ const DataManagerPage = () => {
             <div style={{ padding: '20px 24px', borderBottom: '1px solid #e8e8e8', background: '#fafafa', flexShrink: 0 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
                 <h2 style={{ margin: '0', fontSize: '18px', fontWeight: 600, color: '#262626' }}>对话助手</h2>
-                <Button size="small" onClick={() => setShowChatSidebar(false)}>关闭</Button>
+                <Space>
+                  <Button size="small" onClick={handleNewConversation}>新建</Button>
+                  <Button size="small" onClick={() => setShowChatSidebar(false)}>关闭</Button>
+                </Space>
               </div>
               <p style={{ margin: '0', fontSize: '13px', color: '#8c8c8c' }}>基于知识库的智能问答</p>
+              <div style={{ marginTop: '16px', marginBottom: '16px' }}>
+                <div style={{ fontSize: '12px', fontWeight: 500, color: '#595959', marginBottom: '8px' }}>历史会话</div>
+                <div style={{ display: 'grid', gap: '8px', maxHeight: '160px', overflowY: 'auto' }}>
+                  {chatConversations.length > 0 ? (
+                    chatConversations.map((conversation) => (
+                      <div
+                        key={conversation.id}
+                        style={{
+                          display: 'flex',
+                          gap: '8px',
+                          alignItems: 'center'
+                        }}
+                      >
+                        <Button
+                          type={conversation.id === currentChatId ? 'primary' : 'default'}
+                          onClick={() => loadChatConversation(conversation.id)}
+                          style={{
+                            flex: 1,
+                            textAlign: 'left',
+                            justifyContent: 'flex-start'
+                          }}
+                        >
+                          {conversation.title}
+                        </Button>
+                        <Popconfirm
+                          title="删除这个会话？"
+                          onConfirm={() => handleDeleteConversation(conversation.id)}
+                          okText="删除"
+                          cancelText="取消"
+                        >
+                          <Button danger size="small">删</Button>
+                        </Popconfirm>
+                      </div>
+                    ))
+                  ) : (
+                    <div style={{ fontSize: '12px', color: '#8c8c8c' }}>暂无历史会话</div>
+                  )}
+                </div>
+              </div>
               <div style={{ marginTop: '16px', display: 'grid', gap: '12px' }}>
                 <div>
                   <label style={{ fontSize: '12px', fontWeight: 500, color: '#595959', display: 'block', marginBottom: '6px' }}>检索分类</label>

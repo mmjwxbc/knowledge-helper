@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime
 
 from .ingestion import process_content, refine_content_with_feedback, get_staging_data, clear_staging_data
-from .storage import get_vault_data, get_categories, get_all_tags, add_category, commit_item_with_category, commit_to_storage, init_default_categories, delete_vault_item_data
+from .storage import get_vault_data, get_categories, get_all_tags, add_category, commit_item_with_category, commit_to_storage, init_default_categories, delete_vault_item_data, list_chat_conversations, get_chat_conversation, upsert_chat_conversation, delete_chat_conversation
 from .agent import get_chat_response
 from xhs_downloader.application.app import XHS
 from .deps import get_xhs_instance, get_llm_instance, get_qa_router_instance
@@ -72,6 +72,13 @@ class CommitInput(BaseModel):
 class ChatInput(BaseModel):
     message: str
     referenced_ids: Optional[List[int]] = None
+    category: Optional[str] = None
+    tags: Optional[List[str]] = None
+
+class ChatConversationInput(BaseModel):
+    id: str
+    title: str
+    messages: List[Dict[str, Any]]
     category: Optional[str] = None
     tags: Optional[List[str]] = None
 
@@ -393,6 +400,46 @@ async def chat(input: ChatInput):
         ),
         media_type="text/event-stream"
     )
+
+@app.get("/api/chat/conversations")
+async def get_chat_conversations():
+    """
+    List saved chat conversations.
+    """
+    data = await list_chat_conversations()
+    return {"conversations": data}
+
+@app.get("/api/chat/conversations/{conversation_id}")
+async def get_chat_conversation_endpoint(conversation_id: str):
+    """
+    Get a saved chat conversation.
+    """
+    data = await get_chat_conversation(conversation_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return data
+
+@app.post("/api/chat/conversations")
+async def save_chat_conversation(input: ChatConversationInput):
+    """
+    Create or update a saved chat conversation.
+    """
+    success = await upsert_chat_conversation(
+        conversation_id=input.id,
+        title=input.title,
+        messages=input.messages,
+        category=input.category,
+        tags=input.tags,
+    )
+    return {"status": "success" if success else "failed"}
+
+@app.delete("/api/chat/conversations/{conversation_id}")
+async def delete_chat_conversation_endpoint(conversation_id: str):
+    """
+    Delete a saved chat conversation.
+    """
+    success = await delete_chat_conversation(conversation_id)
+    return {"success": success}
 
 if __name__ == "__main__":
     import uvicorn
