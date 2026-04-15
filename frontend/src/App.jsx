@@ -284,6 +284,12 @@ function App() {
   const [isResizing, setIsResizing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [progressMessage, setProgressMessage] = useState('');
+  const [dailyReviewData, setDailyReviewData] = useState(null);
+  const [dailyReviewLoading, setDailyReviewLoading] = useState(false);
+  const [dailyReviewError, setDailyReviewError] = useState('');
+  const [selectedDailyReviewCategory, setSelectedDailyReviewCategory] = useState('');
+  const [expandedDailyReviewCards, setExpandedDailyReviewCards] = useState(new Set());
+  const [chatPanelMode, setChatPanelMode] = useState('chat');
 
   const messagesEndRef = useRef(null);
   const sidebarRef = useRef(null);
@@ -293,6 +299,10 @@ function App() {
   useEffect(() => {
     fetchCategories();
     fetchTagsForReview();
+  }, []);
+
+  useEffect(() => {
+    fetchDailyReview();
   }, []);
 
   useEffect(() => {
@@ -406,6 +416,7 @@ function App() {
       const response = await fetch(`${API_BASE}/chat/conversations/${conversationId}`);
       if (!response.ok) throw new Error('加载会话失败');
       const data = await response.json();
+      setChatPanelMode('chat');
       setCurrentChatId(data.id);
       setChatMessages(data.messages || []);
       setSelectedChatCategory(data.category || '');
@@ -438,6 +449,12 @@ function App() {
     fetchChatConversations();
   }, [fetchChatConversations]);
 
+  useEffect(() => {
+    if (showChatSidebar) {
+      fetchDailyReview();
+    }
+  }, [showChatSidebar]);
+
   const saveChatConversation = async (conversationId, messagesToSave, category = '', tags = []) => {
     if (!conversationId || !messagesToSave || messagesToSave.length === 0) return;
     try {
@@ -466,6 +483,7 @@ function App() {
   };
 
   const handleNewConversation = () => {
+    setChatPanelMode('chat');
     setCurrentChatId(generateChatConversationId());
     setChatMessages([]);
     setChatInput('');
@@ -542,6 +560,68 @@ function App() {
 
   const fetchVaultData = async () => {
     await fetchVaultDataByCategory();
+  };
+
+  const fetchDailyReview = useCallback(async () => {
+    setDailyReviewLoading(true);
+    setDailyReviewError('');
+    try {
+      const response = await fetch(`${API_BASE}/review/daily`);
+      if (!response.ok) throw new Error('每日回顾加载失败');
+      const data = await response.json();
+      setDailyReviewData(data);
+
+      const groups = data.categories || [];
+      if (!selectedDailyReviewCategory && groups.length > 0) {
+        setSelectedDailyReviewCategory(groups[0].category);
+      } else if (
+        selectedDailyReviewCategory &&
+        !groups.some((item) => item.category === selectedDailyReviewCategory)
+      ) {
+        setSelectedDailyReviewCategory(groups[0]?.category || '');
+      }
+    } catch (error) {
+      console.error('Failed to fetch daily review:', error);
+      setDailyReviewError('每日回顾加载失败');
+    } finally {
+      setDailyReviewLoading(false);
+    }
+  }, [selectedDailyReviewCategory]);
+
+  const handleSelectDailyReviewCategory = (category) => {
+    setChatPanelMode('dailyReview');
+    setSelectedDailyReviewCategory(category);
+  };
+
+  const handleMarkDailyReviewed = async (itemId) => {
+    try {
+      const response = await fetch(`${API_BASE}/review/daily/mark`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ item_id: itemId }),
+      });
+      if (!response.ok) throw new Error('更新复习状态失败');
+      const data = await response.json();
+      setDailyReviewData(data.daily_review);
+
+      const groups = data.daily_review?.categories || [];
+      if (
+        selectedDailyReviewCategory &&
+        !groups.some((item) => item.category === selectedDailyReviewCategory)
+      ) {
+        setSelectedDailyReviewCategory(groups[0]?.category || '');
+      }
+
+      setExpandedDailyReviewCards((prev) => {
+        const next = new Set(prev);
+        next.delete(itemId);
+        return next;
+      });
+      message.success('已标记为今日复习完成');
+    } catch (error) {
+      console.error('Failed to mark daily review item:', error);
+      message.error('更新复习状态失败');
+    }
   };
 
   const handleDeleteItem = async (itemId) => {
@@ -1002,6 +1082,11 @@ function App() {
     const tags = (conversation.tags || []).join(' ').toLowerCase();
     return `${title} ${category} ${tags}`.includes(deferredChatSearch);
   });
+  const dailyReviewCategories = dailyReviewData?.categories || [];
+  const selectedDailyReviewGroup =
+    dailyReviewCategories.find((item) => item.category === selectedDailyReviewCategory) ||
+    dailyReviewCategories[0] ||
+    null;
 
   const renderIdleContent = () => (
     <div className="main-stack">
@@ -1465,35 +1550,118 @@ function App() {
               />
             )}
           </div>
+
+          <div className="daily-review-entry">
+            <div className="daily-review-entry-header">
+              <div>
+                <div className="chat-drawer-title">每日回顾</div>
+                <div className="chat-drawer-copy">缓存每天早上 8 点刷新一次。</div>
+              </div>
+              <Button type="text" size="small" onClick={fetchDailyReview} loading={dailyReviewLoading}>
+                刷新
+              </Button>
+            </div>
+
+            {dailyReviewLoading && !dailyReviewData ? (
+              <EmptyState icon="◌" title="正在加载回顾列表" compact />
+            ) : dailyReviewError ? (
+              <EmptyState icon="!" title="每日回顾暂不可用" description={dailyReviewError} compact />
+            ) : dailyReviewCategories.length > 0 ? (
+              <div className="daily-review-category-list">
+                {dailyReviewCategories.map((item, index) => {
+                  const theme = CATEGORY_TILE_THEMES[index % CATEGORY_TILE_THEMES.length];
+                  const CategoryIcon = getCategoryIcon(item.category);
+                  return (
+                    <button
+                      key={item.category}
+                      type="button"
+                      className={cx(
+                        'daily-review-category-card',
+                        `daily-review-category-card-${theme}`,
+                        item.category === selectedDailyReviewCategory &&
+                          chatPanelMode === 'dailyReview' &&
+                          'daily-review-category-card-active',
+                      )}
+                      onClick={() => handleSelectDailyReviewCategory(item.category)}
+                    >
+                      <span className="daily-review-category-icon">
+                        <CategoryIcon />
+                      </span>
+                      <span className="daily-review-category-copy">
+                        <strong>{item.category}</strong>
+                        <span>{item.count} 张待回顾</span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <EmptyState
+                icon={<ReadOutlined />}
+                title="今天没有待回顾卡片"
+                description="下次会在 08:00 自动更新。"
+                compact
+              />
+            )}
+          </div>
         </aside>
 
         <section className="chat-main-panel">
           <div className="chat-topbar">
             <div className="chat-topbar-title">
-              <div className="chat-panel-title">当前会话</div>
-              <div className="chat-panel-subtitle">输入框固定底部，消息区域独立滚动。</div>
+              <div className="chat-panel-title">
+                {chatPanelMode === 'dailyReview' ? '每日回顾' : '当前会话'}
+              </div>
+              <div className="chat-panel-subtitle">
+                {chatPanelMode === 'dailyReview'
+                  ? '按知识库分类查看今天待复习的卡片。'
+                  : '输入框固定底部，消息区域独立滚动。'}
+              </div>
             </div>
             <div className="chat-toolbar">
-              <Select
-                size="small"
-                allowClear
-                value={selectedChatCategory || undefined}
-                placeholder="分类"
-                onChange={(value) => setSelectedChatCategory(value || '')}
-                options={categories.map((category) => ({ label: category, value: category }))}
-                className="chat-toolbar-select"
-              />
-              <Select
-                size="small"
-                mode="multiple"
-                allowClear
-                value={selectedChatTags}
-                placeholder="标签"
-                onChange={(value) => setSelectedChatTags(value)}
-                options={chatTagOptions.map((tag) => ({ label: tag, value: tag }))}
-                className="chat-toolbar-select chat-toolbar-tags"
-                maxTagCount="responsive"
-              />
+              {chatPanelMode === 'dailyReview' ? (
+                <>
+                  <StatusPill tone="warning">
+                    {dailyReviewData?.total_items || 0} 张待回顾
+                  </StatusPill>
+                  {selectedDailyReviewGroup ? (
+                    <StatusPill>{selectedDailyReviewGroup.category}</StatusPill>
+                  ) : null}
+                  <Button size="small" onClick={() => setChatPanelMode('chat')}>
+                    返回会话
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Button
+                    size="small"
+                    onClick={() => setChatPanelMode('dailyReview')}
+                    disabled={dailyReviewCategories.length === 0}
+                  >
+                    每日回顾
+                  </Button>
+                  <Select
+                    size="small"
+                    allowClear
+                    value={selectedChatCategory || undefined}
+                    placeholder="分类"
+                    onChange={(value) => setSelectedChatCategory(value || '')}
+                    options={categories.map((category) => ({ label: category, value: category }))}
+                    className="chat-toolbar-select"
+                  />
+                  <Select
+                    size="small"
+                    mode="multiple"
+                    allowClear
+                    value={selectedChatTags}
+                    placeholder="标签"
+                    onChange={(value) => setSelectedChatTags(value)}
+                    options={chatTagOptions.map((tag) => ({ label: tag, value: tag }))}
+                    className="chat-toolbar-select chat-toolbar-tags"
+                    maxTagCount="responsive"
+                  />
+                </>
+              )}
               <Tooltip title="关闭助手">
                 <Button
                   type="text"
@@ -1504,8 +1672,101 @@ function App() {
             </div>
           </div>
 
-          <div className="chat-messages" ref={messagesEndRef}>
-            {chatMessages.length === 0 ? (
+          <div className="chat-messages" ref={chatPanelMode === 'chat' ? messagesEndRef : null}>
+            {chatPanelMode === 'dailyReview' ? (
+              selectedDailyReviewGroup ? (
+                <div className="daily-review-panel">
+                  <div className="surface-card">
+                    <div className="surface-row">
+                      <div>
+                        <div className="surface-label">当前分类</div>
+                        <div className="surface-emphasis">{selectedDailyReviewGroup.category}</div>
+                      </div>
+                      <StatusPill tone="warning">{selectedDailyReviewGroup.count} 张卡片</StatusPill>
+                    </div>
+                    <div className="muted-text">
+                      快照生成于{' '}
+                      {dailyReviewData?.generated_at
+                        ? new Date(dailyReviewData.generated_at).toLocaleString('zh-CN')
+                        : '-'}
+                      ，下次刷新{' '}
+                      {dailyReviewData?.next_refresh_at
+                        ? new Date(dailyReviewData.next_refresh_at).toLocaleString('zh-CN')
+                        : '-'}
+                      。
+                    </div>
+                  </div>
+
+                  <div className="review-grid">
+                    {selectedDailyReviewGroup.items.map((item) => (
+                      <Card key={item.id} className="review-card" bordered={false}>
+                        <div className="review-card-header">
+                          <div>
+                            <div className="review-index">
+                              {item.last_reviewed_at
+                                ? `距上次复习 ${item.days_since_review} 天`
+                                : `创建后 ${item.days_since_review} 天未复习`}
+                            </div>
+                            <div className="review-question">{item.question}</div>
+                          </div>
+                          <Button type="primary" onClick={() => handleMarkDailyReviewed(item.id)}>
+                            已复习
+                          </Button>
+                        </div>
+
+                        <div className="review-block">
+                          <div className="surface-label">标签</div>
+                          <div className="tag-row">
+                            {item.tags?.length ? (
+                              item.tags.map((tag) => <StatusPill key={`${item.id}-${tag}`}>{tag}</StatusPill>)
+                            ) : (
+                              <span className="muted-text">暂无标签</span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="review-block">
+                          <Space wrap>
+                            <Button
+                              className="ghost-button"
+                              onClick={() => {
+                                const nextExpanded = new Set(expandedDailyReviewCards);
+                                if (nextExpanded.has(item.id)) nextExpanded.delete(item.id);
+                                else nextExpanded.add(item.id);
+                                setExpandedDailyReviewCards(nextExpanded);
+                              }}
+                            >
+                              {expandedDailyReviewCards.has(item.id) ? '收起答案' : '展开答案'}
+                            </Button>
+                            <Button
+                              onClick={() => {
+                                setSelectedCategory(item.category);
+                                fetchVaultDataByCategory(item.category);
+                                setStatus('knowledgeBase');
+                                setShowChatSidebar(false);
+                              }}
+                            >
+                              查看该分类知识库
+                            </Button>
+                          </Space>
+                          {expandedDailyReviewCards.has(item.id) ? (
+                            <div className="answer-block answer-block-markdown">
+                              <MarkdownMessage content={item.answer || ''} />
+                            </div>
+                          ) : null}
+                        </div>
+                      </Card>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <EmptyState
+                  icon={<ReadOutlined />}
+                  title="今天没有待回顾内容"
+                  description="每日回顾会在下一次 08:00 自动更新。"
+                />
+              )
+            ) : chatMessages.length === 0 ? (
               <div className="chat-empty-hero">
                 <div className="chat-empty-kicker">Knowledge Chat</div>
                 <h2>像 ChatGPT 一样把注意力留给对话本身。</h2>
@@ -1543,52 +1804,54 @@ function App() {
             )}
           </div>
 
-          <div className="chat-composer-wrap">
-            <div className="chat-quick-actions">
-              <Tooltip title="上传附件（待接入）">
-                <Button type="text" icon={<PaperClipOutlined />} disabled />
-              </Tooltip>
-              <Tooltip title="切换模型（待接入）">
-                <Button type="text" icon={<SettingOutlined />} disabled />
-              </Tooltip>
-              <Tooltip title="清空上下文">
-                <Button type="text" icon={<DeleteOutlined />} onClick={handleClearContext} />
-              </Tooltip>
-              <Tooltip title="终止生成">
-                <Button
-                  type="text"
-                  icon={<StopOutlined />}
-                  onClick={handleStopGeneration}
-                  disabled={!isLoading}
-                />
-              </Tooltip>
-            </div>
+          {chatPanelMode === 'chat' ? (
+            <div className="chat-composer-wrap">
+              <div className="chat-quick-actions">
+                <Tooltip title="上传附件（待接入）">
+                  <Button type="text" icon={<PaperClipOutlined />} disabled />
+                </Tooltip>
+                <Tooltip title="切换模型（待接入）">
+                  <Button type="text" icon={<SettingOutlined />} disabled />
+                </Tooltip>
+                <Tooltip title="清空上下文">
+                  <Button type="text" icon={<DeleteOutlined />} onClick={handleClearContext} />
+                </Tooltip>
+                <Tooltip title="终止生成">
+                  <Button
+                    type="text"
+                    icon={<StopOutlined />}
+                    onClick={handleStopGeneration}
+                    disabled={!isLoading}
+                  />
+                </Tooltip>
+              </div>
 
-            <div className="chat-input-wrap">
-              <TextArea
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                placeholder="输入你的问题，按 Enter 发送，Shift + Enter 换行"
-                autoSize={{ minRows: 1, maxRows: 8 }}
-                className="chat-composer-input"
-                onPressEnter={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    handleSendMessage();
-                  }
-                }}
-              />
-              <Button
-                type="primary"
-                shape="circle"
-                icon={<SendOutlined />}
-                onClick={handleSendMessage}
-                loading={isLoading}
-                disabled={isLoading || !chatInput.trim()}
-                className="chat-send-button"
-              />
+              <div className="chat-input-wrap">
+                <TextArea
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  placeholder="输入你的问题，按 Enter 发送，Shift + Enter 换行"
+                  autoSize={{ minRows: 1, maxRows: 8 }}
+                  className="chat-composer-input"
+                  onPressEnter={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSendMessage();
+                    }
+                  }}
+                />
+                <Button
+                  type="primary"
+                  shape="circle"
+                  icon={<SendOutlined />}
+                  onClick={handleSendMessage}
+                  loading={isLoading}
+                  disabled={isLoading || !chatInput.trim()}
+                  className="chat-send-button"
+                />
+              </div>
             </div>
-          </div>
+          ) : null}
         </section>
       </div>
     </div>

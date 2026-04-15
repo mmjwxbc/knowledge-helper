@@ -7,8 +7,9 @@ import uuid
 from datetime import datetime
 
 from .ingestion import process_content, refine_content_with_feedback, get_staging_data, clear_staging_data
-from .storage import get_vault_data, get_categories, get_all_tags, add_category, commit_item_with_category, commit_to_storage, init_default_categories, delete_vault_item_data, list_chat_conversations, get_chat_conversation, upsert_chat_conversation, delete_chat_conversation, upsert_memory_item, get_memory_item, list_memory_items, delete_memory_item, log_memory_access
+from .storage import get_vault_data, get_categories, get_all_tags, add_category, commit_item_with_category, commit_to_storage, init_default_categories, delete_vault_item_data, list_chat_conversations, get_chat_conversation, upsert_chat_conversation, delete_chat_conversation, upsert_memory_item, get_memory_item, list_memory_items, delete_memory_item, log_memory_access, mark_knowledge_item_reviewed
 from .agent import get_chat_response
+from .review import daily_review_cache
 from xhs_downloader.application.app import XHS
 from .deps import get_xhs_instance, get_llm_instance, get_qa_router_instance
 # @asynccontextmanager
@@ -34,12 +35,14 @@ task_queue: Dict[str, Dict[str, Any]] = {}
 async def lifespan(_app: FastAPI):
     # Initialize default categories on startup
     await init_default_categories()
+    await daily_review_cache.startup()
     client = await get_xhs_instance()
     llm = await get_llm_instance()
     qa_router = await get_qa_router_instance()
     async with client: 
         print("XHS 全局实例已进入上下文 (__aenter__ 已执行)")
         yield
+    await daily_review_cache.shutdown()
 
 app = FastAPI(title="Fragmented Learning Assistant API", lifespan=lifespan)
 
@@ -111,6 +114,9 @@ class MemoryAccessInput(BaseModel):
     memory_id: str
     score: Optional[float] = None
     selected: Optional[bool] = False
+
+class DailyReviewMarkInput(BaseModel):
+    item_id: int
 
 # Category Management Endpoints
 @app.get("/api/categories")
@@ -447,6 +453,33 @@ async def get_vault(category: Optional[str] = None):
     """
     data = await get_vault_data(category)
     return {"items": data}
+
+@app.get("/api/review/daily")
+async def get_daily_review():
+    """
+    Get today's daily review snapshot from cache.
+    """
+    payload = await daily_review_cache.get_payload()
+    return payload
+
+@app.post("/api/review/daily/mark")
+async def mark_daily_review_item(input: DailyReviewMarkInput):
+    """
+    Mark a knowledge item as reviewed and update today's cache in place.
+    """
+    updated = await mark_knowledge_item_reviewed(input.item_id)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Knowledge item not found")
+
+    payload = await daily_review_cache.mark_item_reviewed(input.item_id)
+    if payload is None:
+        payload = await daily_review_cache.get_payload()
+
+    return {
+        "status": "success",
+        "item": updated,
+        "daily_review": payload,
+    }
 
 
 @app.delete("/api/vault/delete")

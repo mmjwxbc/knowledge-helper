@@ -1,6 +1,7 @@
 import json
+from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Float, func, text
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Float, func, text, inspect
 from sqlalchemy.orm import sessionmaker, declarative_base
 import chromadb
 from langchain_openai import OpenAIEmbeddings
@@ -20,6 +21,8 @@ class KnowledgeItem(Base):
     category = Column(String, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     status = Column(String, default="approved") # 'staging', 'approved'
+    last_reviewed_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    review_count = Column(Integer, default=0)
 
 class KnowledgeCategory(Base):
     __tablename__ = "knowledge_categories"
@@ -82,6 +85,17 @@ class MemoryAccessLog(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 Base.metadata.create_all(bind=engine)
+
+def _ensure_knowledge_item_review_columns():
+    inspector = inspect(engine)
+    columns = {column["name"] for column in inspector.get_columns("knowledge_items")}
+    with engine.begin() as connection:
+        if "last_reviewed_at" not in columns:
+            connection.execute(text("ALTER TABLE knowledge_items ADD COLUMN last_reviewed_at DATETIME"))
+        if "review_count" not in columns:
+            connection.execute(text("ALTER TABLE knowledge_items ADD COLUMN review_count INTEGER DEFAULT 0"))
+
+_ensure_knowledge_item_review_columns()
 
 # ChromaDB setup (Vector DB)
 CHROMA_PATH = "/home/jhli/knowledge-helper/vault/chroma_db"
@@ -387,6 +401,107 @@ async def delete_vault_item_data(item_id: str):
     except Exception:
         db.rollback()
         return False
+    finally:
+        db.close()
+
+async def get_daily_review_items(
+    min_days_since_review: int = 7,
+    limit_per_category: int = 12,
+    max_categories: int = 12,
+):
+    """
+    Fetch stale knowledge items grouped by category for daily review.
+    """
+    db = SessionLocal()
+    try:
+        items = (
+            db.query(KnowledgeItem)
+            .filter(KnowledgeItem.status == "approved")
+            .order_by(KnowledgeItem.category.asc(), KnowledgeItem.created_at.asc(), KnowledgeItem.id.asc())
+            .all()
+        )
+
+        now = datetime.now(timezone.utc)
+        grouped: Dict[str, List[Dict[str, Any]]] = {}
+        threshold_days = max(int(min_days_since_review), 0)
+
+        for item in items:
+            baseline = item.last_reviewed_at or item.created_at
+            if baseline is None:
+                continue
+
+            if baseline.tzinfo is None:
+                baseline = baseline.replace(tzinfo=timezone.utc)
+
+            days_since_review = max((now - baseline).days, 0)
+            if item.last_reviewed_at is not None and days_since_review < threshold_days:
+                continue
+
+            category = item.category or "未分类"
+            category_items = grouped.setdefault(category, [])
+            if len(category_items) >= limit_per_category:
+                continue
+
+            category_items.append(
+                {
+                    "id": item.id,
+                    "question": item.question,
+                    "answer": item.answer,
+                    "tags": _safe_json_loads(item.tags, []),
+                    "category": category,
+                    "created_at": item.created_at.isoformat() if item.created_at else None,
+                    "last_reviewed_at": item.last_reviewed_at.isoformat() if item.last_reviewed_at else None,
+                    "review_count": item.review_count or 0,
+                    "days_since_review": days_since_review,
+                }
+            )
+
+        sorted_categories = sorted(
+            grouped.items(),
+            key=lambda pair: (
+                -max((entry["days_since_review"] for entry in pair[1]), default=0),
+                pair[0],
+            ),
+        )[:max_categories]
+
+        return [
+            {
+                "category": category,
+                "count": len(category_items),
+                "items": sorted(
+                    category_items,
+                    key=lambda entry: (-entry["days_since_review"], entry["review_count"], entry["id"]),
+                ),
+            }
+            for category, category_items in sorted_categories
+        ]
+    finally:
+        db.close()
+
+async def mark_knowledge_item_reviewed(item_id: int):
+    """
+    Mark a knowledge item as reviewed now.
+    """
+    db = SessionLocal()
+    try:
+        item = db.query(KnowledgeItem).filter(KnowledgeItem.id == int(item_id)).first()
+        if item is None:
+            return None
+
+        item.last_reviewed_at = datetime.now(timezone.utc)
+        item.review_count = (item.review_count or 0) + 1
+        db.commit()
+        db.refresh(item)
+
+        return {
+            "id": item.id,
+            "last_reviewed_at": item.last_reviewed_at.isoformat() if item.last_reviewed_at else None,
+            "review_count": item.review_count or 0,
+        }
+    except Exception as e:
+        print(f"Error marking knowledge item reviewed: {str(e)}")
+        db.rollback()
+        return None
     finally:
         db.close()
 
