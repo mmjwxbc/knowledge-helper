@@ -1,6 +1,6 @@
 import json
 from typing import List, Optional, Dict, Any
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, func, text
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Float, func, text
 from sqlalchemy.orm import sessionmaker, declarative_base
 import chromadb
 from langchain_openai import OpenAIEmbeddings
@@ -37,6 +37,50 @@ class ChatConversation(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
+class MemoryItem(Base):
+    __tablename__ = "memory_items"
+    id = Column(String, primary_key=True, index=True)
+    memory_type = Column(String, nullable=False, index=True)
+    scope = Column(String, nullable=False, index=True)
+    title = Column(String, nullable=False)
+    summary = Column(Text, nullable=False)
+    content = Column(Text, nullable=False)
+    source = Column(String, nullable=False, index=True)
+    source_ref_type = Column(String, nullable=True)
+    source_ref_id = Column(String, nullable=True, index=True)
+    confidence = Column(Float, default=0.7)
+    importance = Column(Float, default=0.5)
+    freshness = Column(Float, default=1.0)
+    status = Column(String, default="active", index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    last_accessed_at = Column(DateTime(timezone=True), nullable=True)
+    access_count = Column(Integer, default=0)
+
+class MemoryTag(Base):
+    __tablename__ = "memory_tags"
+    id = Column(Integer, primary_key=True, index=True)
+    memory_id = Column(String, nullable=False, index=True)
+    tag = Column(String, nullable=False, index=True)
+
+class MemoryFact(Base):
+    __tablename__ = "memory_facts"
+    id = Column(Integer, primary_key=True, index=True)
+    memory_id = Column(String, nullable=False, index=True)
+    fact_key = Column(String, nullable=False, index=True)
+    fact_value = Column(Text, nullable=False)
+    value_type = Column(String, default="text")
+
+class MemoryAccessLog(Base):
+    __tablename__ = "memory_access_log"
+    id = Column(Integer, primary_key=True, index=True)
+    query_text = Column(Text, nullable=False)
+    query_type = Column(String, nullable=False, index=True)
+    memory_id = Column(String, nullable=False, index=True)
+    score = Column(Float, nullable=True)
+    selected = Column(Integer, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
 Base.metadata.create_all(bind=engine)
 
 # ChromaDB setup (Vector DB)
@@ -46,6 +90,35 @@ embeddings = HuggingFaceEmbeddings(model_name="/home/jhli/all-in-rag/bge-small-z
 
 # Collection for our knowledge
 collection = chroma_client.get_or_create_collection(name="fragmented_knowledge")
+
+def _safe_json_loads(raw: str, default):
+    try:
+        return json.loads(raw) if raw else default
+    except (TypeError, json.JSONDecodeError):
+        return default
+
+def _serialize_memory_item(memory: MemoryItem, tags: List[str], facts: List[Dict[str, Any]]) -> Dict[str, Any]:
+    return {
+        "id": memory.id,
+        "memory_type": memory.memory_type,
+        "scope": memory.scope,
+        "title": memory.title,
+        "summary": memory.summary,
+        "content": memory.content,
+        "source": memory.source,
+        "source_ref_type": memory.source_ref_type,
+        "source_ref_id": memory.source_ref_id,
+        "confidence": float(memory.confidence or 0),
+        "importance": float(memory.importance or 0),
+        "freshness": float(memory.freshness or 0),
+        "status": memory.status,
+        "tags": tags,
+        "facts": facts,
+        "created_at": memory.created_at.isoformat() if memory.created_at else None,
+        "updated_at": memory.updated_at.isoformat() if memory.updated_at else None,
+        "last_accessed_at": memory.last_accessed_at.isoformat() if memory.last_accessed_at else None,
+        "access_count": memory.access_count or 0,
+    }
 
 async def commit_to_storage(question: str, answer: str, tags: List[str], category: str = None):
     """
@@ -462,5 +535,197 @@ async def execute_readonly_sql(sql: str, limit: int = 200) -> List[Dict[str, Any
         result = db.execute(text(sql))
         rows = result.mappings().fetchmany(limit)
         return [dict(row) for row in rows]
+    finally:
+        db.close()
+
+async def upsert_memory_item(
+    memory_id: str,
+    memory_type: str,
+    scope: str,
+    title: str,
+    summary: str,
+    content: str,
+    source: str,
+    tags: Optional[List[str]] = None,
+    facts: Optional[List[Dict[str, Any]]] = None,
+    source_ref_type: Optional[str] = None,
+    source_ref_id: Optional[str] = None,
+    confidence: float = 0.7,
+    importance: float = 0.5,
+    freshness: float = 1.0,
+    status: str = "active",
+):
+    """
+    Create or update a memory item with tags and facts.
+    """
+    db = SessionLocal()
+    try:
+        memory = db.query(MemoryItem).filter(MemoryItem.id == memory_id).first()
+        if memory is None:
+            memory = MemoryItem(id=memory_id)
+            db.add(memory)
+
+        memory.memory_type = memory_type
+        memory.scope = scope
+        memory.title = title
+        memory.summary = summary
+        memory.content = content
+        memory.source = source
+        memory.source_ref_type = source_ref_type
+        memory.source_ref_id = source_ref_id
+        memory.confidence = confidence
+        memory.importance = importance
+        memory.freshness = freshness
+        memory.status = status
+
+        db.flush()
+
+        db.query(MemoryTag).filter(MemoryTag.memory_id == memory_id).delete()
+        db.query(MemoryFact).filter(MemoryFact.memory_id == memory_id).delete()
+
+        for tag in sorted({tag.strip() for tag in (tags or []) if isinstance(tag, str) and tag.strip()}):
+            db.add(MemoryTag(memory_id=memory_id, tag=tag))
+
+        for fact in facts or []:
+            fact_key = str(fact.get("fact_key", "")).strip()
+            fact_value = fact.get("fact_value")
+            if not fact_key or fact_value is None:
+                continue
+            db.add(
+                MemoryFact(
+                    memory_id=memory_id,
+                    fact_key=fact_key,
+                    fact_value=json.dumps(fact_value, ensure_ascii=False) if isinstance(fact_value, (dict, list)) else str(fact_value),
+                    value_type=str(fact.get("value_type", "text")),
+                )
+            )
+
+        db.commit()
+        return True
+    except Exception as e:
+        print(f"Error upserting memory item: {str(e)}")
+        db.rollback()
+        return False
+    finally:
+        db.close()
+
+async def get_memory_item(memory_id: str):
+    """
+    Get a single memory item with tags and facts.
+    """
+    db = SessionLocal()
+    try:
+        memory = db.query(MemoryItem).filter(MemoryItem.id == memory_id).first()
+        if memory is None:
+            return None
+        tags = [row.tag for row in db.query(MemoryTag).filter(MemoryTag.memory_id == memory_id).all()]
+        facts = [
+            {
+                "fact_key": row.fact_key,
+                "fact_value": _safe_json_loads(row.fact_value, row.fact_value),
+                "value_type": row.value_type,
+            }
+            for row in db.query(MemoryFact).filter(MemoryFact.memory_id == memory_id).all()
+        ]
+        return _serialize_memory_item(memory, tags, facts)
+    finally:
+        db.close()
+
+async def list_memory_items(
+    memory_type: Optional[str] = None,
+    scope: Optional[str] = None,
+    status: str = "active",
+    tag: Optional[str] = None,
+    limit: int = 100,
+):
+    """
+    List memory items with optional filters.
+    """
+    db = SessionLocal()
+    try:
+        query = db.query(MemoryItem)
+        if memory_type:
+            query = query.filter(MemoryItem.memory_type == memory_type)
+        if scope:
+            query = query.filter(MemoryItem.scope == scope)
+        if status:
+            query = query.filter(MemoryItem.status == status)
+
+        memories = query.order_by(MemoryItem.updated_at.desc(), MemoryItem.created_at.desc()).limit(limit).all()
+        memory_ids = [memory.id for memory in memories]
+        tag_rows = db.query(MemoryTag).filter(MemoryTag.memory_id.in_(memory_ids)).all() if memory_ids else []
+        fact_rows = db.query(MemoryFact).filter(MemoryFact.memory_id.in_(memory_ids)).all() if memory_ids else []
+
+        tags_by_memory: Dict[str, List[str]] = {}
+        for row in tag_rows:
+            tags_by_memory.setdefault(row.memory_id, []).append(row.tag)
+
+        facts_by_memory: Dict[str, List[Dict[str, Any]]] = {}
+        for row in fact_rows:
+            facts_by_memory.setdefault(row.memory_id, []).append(
+                {
+                    "fact_key": row.fact_key,
+                    "fact_value": _safe_json_loads(row.fact_value, row.fact_value),
+                    "value_type": row.value_type,
+                }
+            )
+
+        items = []
+        normalized_tag = tag.strip().lower() if tag else None
+        for memory in memories:
+            memory_tags = tags_by_memory.get(memory.id, [])
+            if normalized_tag and normalized_tag not in {t.lower() for t in memory_tags}:
+                continue
+            items.append(_serialize_memory_item(memory, memory_tags, facts_by_memory.get(memory.id, [])))
+        return items
+    finally:
+        db.close()
+
+async def delete_memory_item(memory_id: str):
+    """
+    Delete a memory item and its related tags/facts.
+    """
+    db = SessionLocal()
+    try:
+        memory = db.query(MemoryItem).filter(MemoryItem.id == memory_id).first()
+        if memory is None:
+            return False
+        db.query(MemoryTag).filter(MemoryTag.memory_id == memory_id).delete()
+        db.query(MemoryFact).filter(MemoryFact.memory_id == memory_id).delete()
+        db.query(MemoryAccessLog).filter(MemoryAccessLog.memory_id == memory_id).delete()
+        db.delete(memory)
+        db.commit()
+        return True
+    except Exception:
+        db.rollback()
+        return False
+    finally:
+        db.close()
+
+async def log_memory_access(query_text: str, query_type: str, memory_id: str, score: Optional[float] = None, selected: bool = False):
+    """
+    Log memory retrieval access and update usage counters.
+    """
+    db = SessionLocal()
+    try:
+        db.add(
+            MemoryAccessLog(
+                query_text=query_text,
+                query_type=query_type,
+                memory_id=memory_id,
+                score=score,
+                selected=1 if selected else 0,
+            )
+        )
+        memory = db.query(MemoryItem).filter(MemoryItem.id == memory_id).first()
+        if memory is not None:
+            memory.access_count = (memory.access_count or 0) + 1
+            memory.last_accessed_at = func.now()
+        db.commit()
+        return True
+    except Exception as e:
+        print(f"Error logging memory access: {str(e)}")
+        db.rollback()
+        return False
     finally:
         db.close()

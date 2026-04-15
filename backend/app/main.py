@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime
 
 from .ingestion import process_content, refine_content_with_feedback, get_staging_data, clear_staging_data
-from .storage import get_vault_data, get_categories, get_all_tags, add_category, commit_item_with_category, commit_to_storage, init_default_categories, delete_vault_item_data, list_chat_conversations, get_chat_conversation, upsert_chat_conversation, delete_chat_conversation
+from .storage import get_vault_data, get_categories, get_all_tags, add_category, commit_item_with_category, commit_to_storage, init_default_categories, delete_vault_item_data, list_chat_conversations, get_chat_conversation, upsert_chat_conversation, delete_chat_conversation, upsert_memory_item, get_memory_item, list_memory_items, delete_memory_item, log_memory_access
 from .agent import get_chat_response
 from xhs_downloader.application.app import XHS
 from .deps import get_xhs_instance, get_llm_instance, get_qa_router_instance
@@ -83,6 +83,35 @@ class ChatConversationInput(BaseModel):
     category: Optional[str] = None
     tags: Optional[List[str]] = None
 
+class MemoryFactInput(BaseModel):
+    fact_key: str
+    fact_value: Any
+    value_type: Optional[str] = "text"
+
+class MemoryItemInput(BaseModel):
+    id: str
+    memory_type: str
+    scope: str
+    title: str
+    summary: str
+    content: str
+    source: str
+    tags: Optional[List[str]] = None
+    facts: Optional[List[MemoryFactInput]] = None
+    source_ref_type: Optional[str] = None
+    source_ref_id: Optional[str] = None
+    confidence: Optional[float] = 0.7
+    importance: Optional[float] = 0.5
+    freshness: Optional[float] = 1.0
+    status: Optional[str] = "active"
+
+class MemoryAccessInput(BaseModel):
+    query_text: str
+    query_type: str
+    memory_id: str
+    score: Optional[float] = None
+    selected: Optional[bool] = False
+
 # Category Management Endpoints
 @app.get("/api/categories")
 async def get_categories_endpoint():
@@ -114,6 +143,82 @@ async def get_tags_endpoint(category: Optional[str] = None):
     """
     data = await get_all_tags(category)
     return {"tags": data}
+
+@app.get("/api/memory")
+async def get_memory_items_endpoint(
+    memory_type: Optional[str] = None,
+    scope: Optional[str] = None,
+    status: str = "active",
+    tag: Optional[str] = None,
+    limit: int = 100,
+):
+    """
+    List memory items with optional filters.
+    """
+    items = await list_memory_items(
+        memory_type=memory_type,
+        scope=scope,
+        status=status,
+        tag=tag,
+        limit=limit,
+    )
+    return {"items": items}
+
+@app.get("/api/memory/{memory_id}")
+async def get_memory_item_endpoint(memory_id: str):
+    """
+    Get a single memory item.
+    """
+    item = await get_memory_item(memory_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Memory item not found")
+    return item
+
+@app.post("/api/memory")
+async def upsert_memory_item_endpoint(input: MemoryItemInput):
+    """
+    Create or update a memory item.
+    """
+    success = await upsert_memory_item(
+        memory_id=input.id,
+        memory_type=input.memory_type,
+        scope=input.scope,
+        title=input.title,
+        summary=input.summary,
+        content=input.content,
+        source=input.source,
+        tags=input.tags,
+        facts=[fact.model_dump() for fact in (input.facts or [])],
+        source_ref_type=input.source_ref_type,
+        source_ref_id=input.source_ref_id,
+        confidence=input.confidence or 0.7,
+        importance=input.importance or 0.5,
+        freshness=input.freshness or 1.0,
+        status=input.status or "active",
+    )
+    return {"status": "success" if success else "failed"}
+
+@app.delete("/api/memory/{memory_id}")
+async def delete_memory_item_endpoint(memory_id: str):
+    """
+    Delete a memory item.
+    """
+    success = await delete_memory_item(memory_id)
+    return {"success": success}
+
+@app.post("/api/memory/access-log")
+async def log_memory_access_endpoint(input: MemoryAccessInput):
+    """
+    Log memory retrieval access.
+    """
+    success = await log_memory_access(
+        query_text=input.query_text,
+        query_type=input.query_type,
+        memory_id=input.memory_id,
+        score=input.score,
+        selected=bool(input.selected),
+    )
+    return {"status": "success" if success else "failed"}
 
 # Content Processing Endpoints
 @app.post("/api/process")
