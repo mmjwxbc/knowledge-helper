@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime
 
 from .ingestion import process_content, refine_content_with_feedback, get_staging_data, clear_staging_data
-from .storage import get_vault_data, get_categories, add_category, commit_item_with_category, init_default_categories, delete_vault_item_data
+from .storage import get_vault_data, get_categories, get_all_tags, add_category, commit_item_with_category, commit_to_storage, init_default_categories, delete_vault_item_data
 from .agent import get_chat_response
 from xhs_downloader.application.app import XHS
 from .deps import get_xhs_instance, get_llm_instance, get_qa_router_instance
@@ -72,6 +72,8 @@ class CommitInput(BaseModel):
 class ChatInput(BaseModel):
     message: str
     referenced_ids: Optional[List[int]] = None
+    category: Optional[str] = None
+    tags: Optional[List[str]] = None
 
 # Category Management Endpoints
 @app.get("/api/categories")
@@ -96,6 +98,14 @@ async def add_category_endpoint(category_data: dict):
         return {"status": "success", "message": f"Category '{name}' added"}
     else:
         return {"status": "failed", "message": f"Category '{name}' already exists"}
+
+@app.get("/api/tags")
+async def get_tags_endpoint(category: Optional[str] = None):
+    """
+    Get existing tags in the knowledge vault, optionally filtered by category.
+    """
+    data = await get_all_tags(category)
+    return {"tags": data}
 
 # Content Processing Endpoints
 @app.post("/api/process")
@@ -305,21 +315,15 @@ async def correct_process(input: CorrectInput):
 @app.post("/api/commit")
 async def commit_endpoint(item: CommitInput):
     """
-    Commit approved Q&A to storage with category.
+    Commit a single approved Q&A item to storage with category and tags.
     """
-    # Validate that the data matches staging (optional security check)
-    staging_data = get_staging_data(item.id)
-    if staging_data:
-        # Use the staging data or the provided data
-        success = await commit_item_with_category(
-            staging_data["items"], staging_data["category"]
-        )
-        if success:
-            # Clear staging data after successful commit
-            clear_staging_data(item.id)
-    else:
-        # No staging data found, commit directly
-        success = False
+    clean_tags = [tag.strip() for tag in item.tags if isinstance(tag, str) and tag.strip()]
+    success = await commit_to_storage(
+        question=item.question,
+        answer=item.answer,
+        tags=clean_tags,
+        category=item.category
+    )
 
     return {"status": "success" if success else "failed"}
 
@@ -381,7 +385,12 @@ async def chat(input: ChatInput):
     from fastapi.responses import StreamingResponse
 
     return StreamingResponse(
-        get_chat_response(input.message, input.referenced_ids),
+        get_chat_response(
+            message=input.message,
+            referenced_ids=input.referenced_ids,
+            category=input.category,
+            tags=input.tags,
+        ),
         media_type="text/event-stream"
     )
 

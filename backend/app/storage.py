@@ -1,5 +1,5 @@
 import json
-from typing import List
+from typing import List, Optional
 from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, func
 from sqlalchemy.orm import sessionmaker, declarative_base
 import chromadb
@@ -124,6 +124,54 @@ async def get_items_by_ids(ids: List[int]):
     finally:
         db.close()
 
+async def get_filtered_knowledge_items(category: Optional[str] = None, tags: Optional[List[str]] = None):
+    """
+    Fetch approved knowledge items for retrieval, optionally filtered by category and tags.
+    """
+    db = SessionLocal()
+    try:
+        query = db.query(KnowledgeItem).filter(KnowledgeItem.status == "approved")
+
+        if category:
+            query = query.filter(KnowledgeItem.category == category)
+
+        items = query.all()
+        normalized_tags = {
+            tag.strip().lower()
+            for tag in (tags or [])
+            if isinstance(tag, str) and tag.strip()
+        }
+
+        results = []
+        for item in items:
+            try:
+                parsed_tags = json.loads(item.tags) if item.tags else []
+            except (TypeError, json.JSONDecodeError):
+                parsed_tags = []
+
+            if normalized_tags:
+                item_tags = {
+                    tag.strip().lower()
+                    for tag in parsed_tags
+                    if isinstance(tag, str) and tag.strip()
+                }
+                if not item_tags.intersection(normalized_tags):
+                    continue
+
+            results.append(
+                {
+                    "id": item.id,
+                    "question": item.question,
+                    "answer": item.answer,
+                    "tags": parsed_tags,
+                    "category": item.category,
+                }
+            )
+
+        return results
+    finally:
+        db.close()
+
 async def get_categories():
     """
     Get all knowledge categories.
@@ -132,6 +180,33 @@ async def get_categories():
     try:
         categories = db.query(KnowledgeCategory).all()
         return [cat.name for cat in categories]
+    finally:
+        db.close()
+
+async def get_all_tags(category: Optional[str] = None):
+    """
+    Get distinct tags already used in the knowledge vault, optionally filtered by category.
+    """
+    db = SessionLocal()
+    try:
+        query = db.query(KnowledgeItem.tags).filter(KnowledgeItem.status == "approved")
+        if category:
+            query = query.filter(KnowledgeItem.category == category)
+        items = query.all()
+        tag_set = set()
+        for (raw_tags,) in items:
+            if not raw_tags:
+                continue
+            try:
+                parsed_tags = json.loads(raw_tags)
+            except (TypeError, json.JSONDecodeError):
+                continue
+            for tag in parsed_tags:
+                if isinstance(tag, str):
+                    clean_tag = tag.strip()
+                    if clean_tag:
+                        tag_set.add(clean_tag)
+        return sorted(tag_set)
     finally:
         db.close()
 

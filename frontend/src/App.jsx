@@ -9,6 +9,7 @@ const API_BASE = 'http://localhost:8000/api';
 
 const DataManagerPage = () => {
   const [categories, setCategories] = useState([]);
+  const [reviewTagOptions, setReviewTagOptions] = useState([]);
   const [currentResult, setCurrentResult] = useState(null);
   const [feedback, setFeedback] = useState('');
   const [finalItems, setFinalItems] = useState([]);
@@ -28,12 +29,15 @@ const DataManagerPage = () => {
   const [deleteModalVisible, setDeleteModalVisible] = useState(false);
   const [itemToDelete, setItemToDelete] = useState(null);
   const [extractMode, setExtractMode] = useState('text_and_images'); // text_and_images, text_only
+  const [editedTags, setEditedTags] = useState({});
   
   // 聊天功能状态
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [selectedChatCategory, setSelectedChatCategory] = useState('');
+  const [selectedChatTags, setSelectedChatTags] = useState([]);
+  const [chatTagOptions, setChatTagOptions] = useState([]);
   const [showChatSidebar, setShowChatSidebar] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(350);
   const [isResizing, setIsResizing] = useState(false);
@@ -43,7 +47,22 @@ const DataManagerPage = () => {
   // 获取数据库类别
   useEffect(() => {
     fetchCategories();
+    fetchTagsForReview();
   }, []);
+
+  useEffect(() => {
+    setEditedTags({});
+    setSelectedItems([]);
+  }, [currentResult]);
+
+  useEffect(() => {
+    fetchTagsForReview(currentResult?.category);
+  }, [currentResult?.category]);
+
+  useEffect(() => {
+    fetchTagsForChat(selectedChatCategory);
+    setSelectedChatTags([]);
+  }, [selectedChatCategory]);
 
   // 获取知识库数据（根据类别）
   const fetchVaultDataByCategory = async (category = null) => {
@@ -72,6 +91,90 @@ const DataManagerPage = () => {
       console.error('Failed to fetch categories:', error);
     }
   };
+
+  const fetchTagsForReview = async (category = null) => {
+    try {
+      const url = category
+        ? `${API_BASE}/tags?category=${encodeURIComponent(category)}`
+        : `${API_BASE}/tags`;
+      const response = await fetch(url);
+      const data = await response.json();
+      if (data.tags) {
+        setReviewTagOptions(data.tags);
+      }
+    } catch (error) {
+      console.error('Failed to fetch tags:', error);
+    }
+  };
+
+  const fetchTagsForChat = async (category = null) => {
+    try {
+      const url = category
+        ? `${API_BASE}/tags?category=${encodeURIComponent(category)}`
+        : `${API_BASE}/tags`;
+      const response = await fetch(url);
+      const data = await response.json();
+      if (data.tags) {
+        setChatTagOptions(data.tags);
+      }
+    } catch (error) {
+      console.error('Failed to fetch chat tags:', error);
+    }
+  };
+
+  const normalizeTagList = (tags) => Array.from(new Set(
+    (tags || [])
+      .map(tag => (typeof tag === 'string' ? tag.trim() : ''))
+      .filter(Boolean)
+  ));
+
+  const getCurrentTagsForIndex = (index) => editedTags[index] || currentResult?.tags?.[index] || [];
+
+  const updateEditableTag = (index, tagIndex, value) => {
+    const nextTags = [...getCurrentTagsForIndex(index)];
+    nextTags[tagIndex] = value;
+    setEditedTags(prev => ({
+      ...prev,
+      [index]: nextTags
+    }));
+  };
+
+  const removeEditableTag = (index, tagIndex) => {
+    const nextTags = getCurrentTagsForIndex(index).filter((_, idx) => idx !== tagIndex);
+    setEditedTags(prev => ({
+      ...prev,
+      [index]: nextTags
+    }));
+  };
+
+  const addEditableTag = (index, initialValue = '') => {
+    const nextTags = [...getCurrentTagsForIndex(index), initialValue];
+    setEditedTags(prev => ({
+      ...prev,
+      [index]: nextTags
+    }));
+  };
+
+  const applySuggestedTag = (index, tag) => {
+    const nextTags = normalizeTagList([...getCurrentTagsForIndex(index), tag]);
+    setEditedTags(prev => ({
+      ...prev,
+      [index]: nextTags
+    }));
+  };
+
+  const knowledgeTagStats = finalItems.reduce((acc, item) => {
+    (item.tags || []).forEach((tag) => {
+      const cleanTag = typeof tag === 'string' ? tag.trim() : '';
+      if (!cleanTag) return;
+      acc[cleanTag] = (acc[cleanTag] || 0) + 1;
+    });
+    return acc;
+  }, {});
+
+  const sortedKnowledgeTags = Object.entries(knowledgeTagStats)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'zh-CN'))
+    .map(([tag, count]) => ({ tag, count }));
 
   const fetchVaultData = async () => {
     await fetchVaultDataByCategory();
@@ -366,7 +469,7 @@ const DataManagerPage = () => {
             id: currentResult.id,
             question: currentResult.questions[index],
             answer: currentResult.answers[index],
-            tags: currentResult.tags[index],
+            tags: normalizeTagList(editedTags[index] || currentResult.tags[index] || []),
             category: currentResult.category,
           }),
         });
@@ -383,9 +486,12 @@ const DataManagerPage = () => {
       if (successCount > 0) {
         message.success(`成功入库 ${successCount} 个项目`);
         await fetchVaultData();
+        await fetchTagsForReview(currentResult.category);
+        await fetchTagsForChat(selectedChatCategory);
         setStatus('idle');
         setCurrentResult(null);
         setSelectedItems([]);
+        setEditedTags({});
       } else {
         message.error('入库失败');
       }
@@ -444,7 +550,12 @@ const DataManagerPage = () => {
       const response = await fetch(`${API_BASE}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: chatInput, referenced_ids: [] }),
+        body: JSON.stringify({
+          message: chatInput,
+          referenced_ids: [],
+          category: selectedChatCategory || null,
+          tags: selectedChatTags,
+        }),
       });
 
       if (!response.ok) {
@@ -773,6 +884,44 @@ const DataManagerPage = () => {
                       <span style={{ color: '#999', fontSize: '14px' }}>无</span>
                     )}
                   </div>
+                  <div style={{ marginTop: '16px' }}>
+                    <strong style={{ color: '#595959', fontSize: '14px', display: 'block', marginBottom: '8px' }}>可编辑标签：</strong>
+                    <div style={{ display: 'grid', gap: '8px' }}>
+                      {getCurrentTagsForIndex(index).map((tag, tagIdx) => (
+                        <div key={`${index}-${tagIdx}`} style={{ display: 'flex', gap: '8px' }}>
+                          <Input
+                            value={tag}
+                            placeholder="输入或修改 tag"
+                            onChange={(e) => updateEditableTag(index, tagIdx, e.target.value)}
+                          />
+                          <Button danger onClick={() => removeEditableTag(index, tagIdx)}>
+                            删除
+                          </Button>
+                        </div>
+                      ))}
+                      <Button onClick={() => addEditableTag(index)} style={{ width: 'fit-content' }}>
+                        添加标签
+                      </Button>
+                      {reviewTagOptions.length > 0 && (
+                        <div>
+                          <div style={{ fontSize: '12px', color: '#8c8c8c', marginBottom: '6px' }}>
+                            当前分类已有标签
+                          </div>
+                          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                            {reviewTagOptions.map((tag) => (
+                              <Button
+                                key={tag}
+                                size="small"
+                                onClick={() => applySuggestedTag(index, tag)}
+                              >
+                                {tag}
+                              </Button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </Card>
               ))}
               </div>
@@ -873,6 +1022,39 @@ const DataManagerPage = () => {
               }
               style={{ boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}
             >
+              <div style={{ marginBottom: '20px', padding: '16px', background: '#fafafa', borderRadius: '8px', border: '1px solid #f0f0f0' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '10px' }}>
+                  <div style={{ fontSize: '15px', fontWeight: 600, color: '#262626' }}>Tag 概览</div>
+                  <div style={{ fontSize: '12px', color: '#8c8c8c' }}>
+                    {sortedKnowledgeTags.length} 个标签
+                  </div>
+                </div>
+                {sortedKnowledgeTags.length > 0 ? (
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                    {sortedKnowledgeTags.map(({ tag, count }) => (
+                      <span
+                        key={tag}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          padding: '4px 10px',
+                          background: '#f0f5ff',
+                          color: '#1d39c4',
+                          borderRadius: '999px',
+                          fontSize: '12px'
+                        }}
+                      >
+                        <span>{tag}</span>
+                        <span style={{ color: '#597ef7' }}>{count}</span>
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ fontSize: '13px', color: '#999' }}>当前范围内还没有 tag 数据</div>
+                )}
+              </div>
+
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(450px, 1fr))', gap: '20px' }}>
                 {finalItems.map((item) => (
                   <Card
@@ -1051,6 +1233,31 @@ const DataManagerPage = () => {
                 <Button size="small" onClick={() => setShowChatSidebar(false)}>关闭</Button>
               </div>
               <p style={{ margin: '0', fontSize: '13px', color: '#8c8c8c' }}>基于知识库的智能问答</p>
+              <div style={{ marginTop: '16px', display: 'grid', gap: '12px' }}>
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: 500, color: '#595959', display: 'block', marginBottom: '6px' }}>检索分类</label>
+                  <Select
+                    allowClear
+                    style={{ width: '100%' }}
+                    placeholder="不过滤分类"
+                    value={selectedChatCategory || undefined}
+                    onChange={(value) => setSelectedChatCategory(value || '')}
+                    options={categories.map(c => ({ label: c, value: c }))}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: 500, color: '#595959', display: 'block', marginBottom: '6px' }}>检索标签</label>
+                  <Select
+                    mode="multiple"
+                    allowClear
+                    style={{ width: '100%' }}
+                    placeholder="不过滤标签"
+                    value={selectedChatTags}
+                    onChange={(value) => setSelectedChatTags(value)}
+                    options={chatTagOptions.map(tag => ({ label: tag, value: tag }))}
+                  />
+                </div>
+              </div>
             </div>
 
             {/* 聊天消息区域 */}
