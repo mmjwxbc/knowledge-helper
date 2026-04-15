@@ -129,6 +129,10 @@ async def classify_intent(message: str, history: Optional[List[Dict[str, Any]]] 
 
     1. qa_search
     适用于：用户在提问、解释概念、询问某个知识点、让你回答问题。
+    也适用于：用户引用上文并要求你回答，例如：
+    - 回答一下上述问题
+    - 逐个回答这些问题
+    - 展开讲讲刚才提到的那个问题
 
     2. sql_analysis
     适用于：用户想检索、统计、汇总、回顾知识库或会话历史，例如：
@@ -136,6 +140,7 @@ async def classify_intent(message: str, history: Optional[List[Dict[str, Any]]] 
     - 请总结一下我最近的提问
     - 帮我统计某类标签下有多少知识
     - 查一下某分类里有哪些问题
+    只有当用户目标是“查记录/做统计/做汇总”时才归类到 sql_analysis。
 
     只返回 JSON：
     {{
@@ -238,6 +243,7 @@ async def answer_sql_analysis(message: str, category: Optional[str], tags: Optio
     2. 如有必要，补充 2-5 条要点。
     3. 不要编造不存在的数据。
     4. 简要说明你是基于知识库/会话记录分析得到的。
+    5. 如果用户只是要“列出/统计/总结”记录，就按分析结果回答，不要擅自转成知识问答。
     """
     async for chunk in llm.astream([SystemMessage(content="你是一个严谨的知识库分析助手。"), HumanMessage(content=prompt)]):
         if chunk.content:
@@ -400,7 +406,7 @@ async def generate_node(state: AgentState):
     context_str = "\n---\n".join(state["context"])
     retrieval_summary = state.get("retrieval_summary", "")
     system_prompt = f"""
-    You are a Fragmented Learning AI Tutor. Your goal is to help users learn based on their collected knowledge.
+    You are a powerful AI tutor and assistant. Your goal is to answer like ChatGPT, but grounded in the user's knowledge base when relevant.
     
     RETRIEVAL SUMMARY:
     {retrieval_summary}
@@ -409,10 +415,14 @@ async def generate_node(state: AgentState):
     {context_str}
     
     INSTRUCTIONS:
-    1. If context is provided, prioritize answering based on the context.
-    2. If the user provided specific 'referenced IDs', those items are extra important.
-    3. Keep your answers concise and educational.
-    4. If you don't know the answer, say so.
+    1. If the user's question matches a question already present in the context, answer it directly using the stored answer instead of summarizing the retrieval results.
+    2. If there is no exact match but the context contains related knowledge, synthesize a direct answer from that knowledge.
+    3. Do not primarily respond by listing retrieved questions, categories, metadata, or saying what was found, unless the user explicitly asked for a list or summary.
+    4. If the user refers to "上述问题/这些问题/刚才的问题", infer the target from recent conversation and answer those questions directly.
+    5. If multiple referenced questions need answers, answer them one by one with clear headings.
+    6. If the user provided specific 'referenced IDs', those items are extra important.
+    7. Keep answers clear, direct, and useful. Avoid unnecessary meta commentary such as "根据查询结果" unless the task is explicitly analytical.
+    8. If the context is insufficient, say what is missing briefly and then answer with the best grounded explanation you can.
     """
     
     messages = [SystemMessage(content=system_prompt)] + state["messages"]
@@ -481,7 +491,7 @@ async def get_chat_response(
     context_str = "\n---\n".join(final_state["context"])
     
     system_prompt = f"""
-    You are a Fragmented Learning AI Tutor. Your goal is to help users learn based on their collected knowledge.
+    You are a powerful AI tutor and assistant. Your goal is to answer like ChatGPT, but grounded in the user's knowledge base when relevant.
     
     RETRIEVAL SUMMARY:
     {final_state.get("retrieval_summary", "")}
@@ -490,10 +500,14 @@ async def get_chat_response(
     {context_str}
     
     INSTRUCTIONS:
-    1. If context is provided, prioritize answering based on the context.
-    2. If the user provided specific 'referenced IDs', those items are extra important.
-    3. Keep your answers concise and educational.
-    4. If you don't know the answer, say so.
+    1. If the user's question matches a question already present in the context, answer it directly using the stored answer instead of summarizing the retrieval results.
+    2. If there is no exact match but the context contains related knowledge, synthesize a direct answer from that knowledge.
+    3. Do not primarily respond by listing retrieved questions, categories, metadata, or saying what was found, unless the user explicitly asked for a list or summary.
+    4. If the user refers to "上述问题/这些问题/刚才的问题", infer the target from recent conversation and answer those questions directly.
+    5. If multiple referenced questions need answers, answer them one by one with clear headings.
+    6. If the user provided specific 'referenced IDs', those items are extra important.
+    7. Keep answers clear, direct, and useful. Avoid unnecessary meta commentary such as "根据查询结果" unless the task is explicitly analytical.
+    8. If the context is insufficient, say what is missing briefly and then answer with the best grounded explanation you can.
     """
     
     messages = [SystemMessage(content=system_prompt)] + final_state["messages"]
