@@ -6,6 +6,7 @@ import {
   Input,
   Layout,
   Modal,
+  Popover,
   Popconfirm,
   Progress,
   Select,
@@ -19,7 +20,7 @@ import {
   BookOutlined,
   CheckCircleOutlined,
   CloseOutlined,
-  CopyOutlined,
+  DownOutlined,
   DeleteOutlined,
   ExperimentOutlined,
   FolderOpenOutlined,
@@ -39,22 +40,19 @@ import {
   ToolOutlined,
   UserOutlined,
 } from '@ant-design/icons';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import Prism from 'prismjs';
-import 'prismjs/components/prism-bash';
-import 'prismjs/components/prism-javascript';
-import 'prismjs/components/prism-jsx';
-import 'prismjs/components/prism-json';
-import 'prismjs/components/prism-markdown';
-import 'prismjs/components/prism-python';
-import 'prismjs/themes/prism-tomorrow.css';
 import './App.css';
+import EmptyState from './components/ui/EmptyState';
+import MarkdownMessage from './components/ui/MarkdownMessage';
+import SectionIntro from './components/ui/SectionIntro';
+import StatusPill from './components/ui/StatusPill';
+import InterviewAnalyzePanel from './features/interview/components/InterviewAnalyzePanel';
+import InterviewSessionPanel from './features/interview/components/InterviewSessionPanel';
+import useInterviewAssistant from './features/interview/hooks/useInterviewAssistant';
+import { API_BASE } from './lib/api';
+import { cx } from './lib/classNames';
 
 const { Sider, Content } = Layout;
 const { TextArea } = Input;
-
-const API_BASE = 'http://localhost:8000/api';
 
 const generateChatConversationId = () =>
   `chat_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
@@ -75,27 +73,6 @@ const normalizeTagList = (tags) =>
         .filter(Boolean),
     ),
   );
-
-const cx = (...parts) => parts.filter(Boolean).join(' ');
-
-const COLLAPSED_CODE_HEIGHT = 260;
-
-const getCodeLanguage = (className = '') => {
-  const match = /language-([\w-]+)/.exec(className);
-  return match?.[1]?.toLowerCase() || 'text';
-};
-
-const getHighlightedCode = (code, language) => {
-  const normalizedLanguage =
-    language === 'sh' || language === 'shell' ? 'bash' : language === 'py' ? 'python' : language;
-  const grammar = Prism.languages[normalizedLanguage];
-  return grammar
-    ? Prism.highlight(code, grammar, normalizedLanguage)
-    : code
-        .replaceAll('&', '&amp;')
-        .replaceAll('<', '&lt;')
-        .replaceAll('>', '&gt;');
-};
 
 const CATEGORY_TILE_THEMES = [
   'slate',
@@ -135,114 +112,12 @@ const TASK_STATUS_META = {
   failed: '失败',
 };
 
-function StatusPill({ children, tone = 'neutral' }) {
-  return <span className={cx('status-pill', `status-pill-${tone}`)}>{children}</span>;
-}
-
-function SectionIntro({ eyebrow, title, description, aside }) {
-  return (
-    <div className="section-intro">
-      <div>
-        {eyebrow ? <div className="section-eyebrow">{eyebrow}</div> : null}
-        <h1 className="section-title">{title}</h1>
-        {description ? <p className="section-description">{description}</p> : null}
-      </div>
-      {aside ? <div className="section-aside">{aside}</div> : null}
-    </div>
-  );
-}
-
-function EmptyState({ icon, title, description, compact = false }) {
-  return (
-    <div className={cx('empty-state', compact && 'empty-state-compact')}>
-      <div className="empty-icon">{icon}</div>
-      <div className="empty-title">{title}</div>
-      {description ? <p className="empty-description">{description}</p> : null}
-    </div>
-  );
-}
-
 function StatCard({ label, value, hint }) {
   return (
     <div className="stat-card">
       <div className="stat-label">{label}</div>
       <div className="stat-value">{value}</div>
       <div className="stat-hint">{hint}</div>
-    </div>
-  );
-}
-
-function CodeBlock({ className, inline, children, ...props }) {
-  const rawCode = String(children).replace(/\n$/, '');
-  const language = getCodeLanguage(className);
-  const lineCount = rawCode.split('\n').length;
-  const collapsible = lineCount > 12 || rawCode.length > 520;
-  const [expanded, setExpanded] = useState(!collapsible);
-
-  if (inline) {
-    return (
-      <code className="inline-code" {...props}>
-        {children}
-      </code>
-    );
-  }
-
-  const highlightedCode = getHighlightedCode(rawCode, language);
-
-  const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(rawCode);
-      message.success('代码已复制');
-    } catch {
-      message.error('复制失败');
-    }
-  };
-
-  return (
-    <div className="code-block-shell">
-      <div className="code-block-toolbar">
-        <span className="code-language">{language}</span>
-        <Space size={8}>
-          {collapsible ? (
-            <Button size="small" type="text" onClick={() => setExpanded((value) => !value)}>
-              {expanded ? '收起' : '展开'}
-            </Button>
-          ) : null}
-          <Tooltip title="复制代码">
-            <Button size="small" type="text" icon={<CopyOutlined />} onClick={handleCopy} />
-          </Tooltip>
-        </Space>
-      </div>
-      <div
-        className={cx('code-block-body', !expanded && 'code-block-collapsed')}
-        style={!expanded ? { maxHeight: COLLAPSED_CODE_HEIGHT } : undefined}
-      >
-        <pre className={cx(className, 'code-block-pre')}>
-          <code dangerouslySetInnerHTML={{ __html: highlightedCode }} {...props} />
-        </pre>
-      </div>
-    </div>
-  );
-}
-
-function MarkdownMessage({ content }) {
-  return (
-    <div className="markdown-body">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={{
-          code({ className, children, ...props }) {
-            const inline = !className && !String(children).includes('\n');
-            return (
-              <CodeBlock className={className} inline={inline} {...props}>
-                {children}
-              </CodeBlock>
-            );
-          },
-        }}
-      >
-        {content}
-      </ReactMarkdown>
     </div>
   );
 }
@@ -279,6 +154,8 @@ function App() {
   const [chatTagOptions, setChatTagOptions] = useState([]);
   const [showChatSidebar, setShowChatSidebar] = useState(false);
   const [chatSearch, setChatSearch] = useState('');
+  const [chatCategoryPickerOpen, setChatCategoryPickerOpen] = useState(false);
+  const [chatTagPickerOpen, setChatTagPickerOpen] = useState(false);
   const [showAllKnowledgeTags, setShowAllKnowledgeTags] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(380);
   const [isResizing, setIsResizing] = useState(false);
@@ -295,6 +172,59 @@ function App() {
   const sidebarRef = useRef(null);
   const chatAbortControllerRef = useRef(null);
   const deferredChatSearch = useDeferredValue(chatSearch.trim().toLowerCase());
+  const {
+    interviewMode,
+    interviewSessions,
+    currentInterviewSession,
+    interviewCodeUrl,
+    setInterviewCodeUrl,
+    setInterviewCodeFile,
+    interviewDifficulty,
+    setInterviewDifficulty,
+    interviewQuestionCount,
+    setInterviewQuestionCount,
+    interviewProgress,
+    interviewProgressMessage,
+    interviewMessages,
+    interviewInput,
+    setInterviewInput,
+    interviewLoading,
+    interviewMessagesEndRef,
+    openInterviewAnalyzer,
+    openInterviewSession,
+    closeInterview,
+    analyzeInterviewCode,
+    sendInterviewMessage,
+  } = useInterviewAssistant({
+    selectedChatCategory,
+    selectedChatTags,
+  });
+
+  const fetchDailyReview = useCallback(async () => {
+    setDailyReviewLoading(true);
+    setDailyReviewError('');
+    try {
+      const response = await fetch(`${API_BASE}/review/daily`);
+      if (!response.ok) throw new Error('每日回顾加载失败');
+      const data = await response.json();
+      setDailyReviewData(data);
+
+      const groups = data.categories || [];
+      if (!selectedDailyReviewCategory && groups.length > 0) {
+        setSelectedDailyReviewCategory(groups[0].category);
+      } else if (
+        selectedDailyReviewCategory &&
+        !groups.some((item) => item.category === selectedDailyReviewCategory)
+      ) {
+        setSelectedDailyReviewCategory(groups[0]?.category || '');
+      }
+    } catch (error) {
+      console.error('Failed to fetch daily review:', error);
+      setDailyReviewError('每日回顾加载失败');
+    } finally {
+      setDailyReviewLoading(false);
+    }
+  }, [selectedDailyReviewCategory]);
 
   useEffect(() => {
     fetchCategories();
@@ -303,7 +233,7 @@ function App() {
 
   useEffect(() => {
     fetchDailyReview();
-  }, []);
+  }, [fetchDailyReview]);
 
   useEffect(() => {
     setEditedTags({});
@@ -453,7 +383,7 @@ function App() {
     if (showChatSidebar) {
       fetchDailyReview();
     }
-  }, [showChatSidebar]);
+  }, [fetchDailyReview, showChatSidebar]);
 
   const saveChatConversation = async (conversationId, messagesToSave, category = '', tags = []) => {
     if (!conversationId || !messagesToSave || messagesToSave.length === 0) return;
@@ -561,32 +491,6 @@ function App() {
   const fetchVaultData = async () => {
     await fetchVaultDataByCategory();
   };
-
-  const fetchDailyReview = useCallback(async () => {
-    setDailyReviewLoading(true);
-    setDailyReviewError('');
-    try {
-      const response = await fetch(`${API_BASE}/review/daily`);
-      if (!response.ok) throw new Error('每日回顾加载失败');
-      const data = await response.json();
-      setDailyReviewData(data);
-
-      const groups = data.categories || [];
-      if (!selectedDailyReviewCategory && groups.length > 0) {
-        setSelectedDailyReviewCategory(groups[0].category);
-      } else if (
-        selectedDailyReviewCategory &&
-        !groups.some((item) => item.category === selectedDailyReviewCategory)
-      ) {
-        setSelectedDailyReviewCategory(groups[0]?.category || '');
-      }
-    } catch (error) {
-      console.error('Failed to fetch daily review:', error);
-      setDailyReviewError('每日回顾加载失败');
-    } finally {
-      setDailyReviewLoading(false);
-    }
-  }, [selectedDailyReviewCategory]);
 
   const handleSelectDailyReviewCategory = (category) => {
     setChatPanelMode('dailyReview');
@@ -1087,6 +991,8 @@ function App() {
     dailyReviewCategories.find((item) => item.category === selectedDailyReviewCategory) ||
     dailyReviewCategories[0] ||
     null;
+  const selectedChatTagSummary = selectedChatTags.slice(0, 2).join(' · ');
+  const isInterviewWorkspaceOpen = interviewMode === 'analyze' || interviewMode === 'session';
 
   const renderIdleContent = () => (
     <div className="main-stack">
@@ -1640,26 +1546,6 @@ function App() {
                   >
                     每日回顾
                   </Button>
-                  <Select
-                    size="small"
-                    allowClear
-                    value={selectedChatCategory || undefined}
-                    placeholder="分类"
-                    onChange={(value) => setSelectedChatCategory(value || '')}
-                    options={categories.map((category) => ({ label: category, value: category }))}
-                    className="chat-toolbar-select"
-                  />
-                  <Select
-                    size="small"
-                    mode="multiple"
-                    allowClear
-                    value={selectedChatTags}
-                    placeholder="标签"
-                    onChange={(value) => setSelectedChatTags(value)}
-                    options={chatTagOptions.map((tag) => ({ label: tag, value: tag }))}
-                    className="chat-toolbar-select chat-toolbar-tags"
-                    maxTagCount="responsive"
-                  />
                 </>
               )}
               <Tooltip title="关闭助手">
@@ -1827,31 +1713,289 @@ function App() {
               </div>
 
               <div className="chat-input-wrap">
-                <TextArea
-                  value={chatInput}
-                  onChange={(e) => setChatInput(e.target.value)}
-                  placeholder="输入你的问题，按 Enter 发送，Shift + Enter 换行"
-                  autoSize={{ minRows: 1, maxRows: 8 }}
-                  className="chat-composer-input"
-                  onPressEnter={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault();
-                      handleSendMessage();
-                    }
-                  }}
-                />
-                <Button
-                  type="primary"
-                  shape="circle"
-                  icon={<SendOutlined />}
-                  onClick={handleSendMessage}
-                  loading={isLoading}
-                  disabled={isLoading || !chatInput.trim()}
-                  className="chat-send-button"
-                />
+                <div className="chat-input-main">
+                  <div className="chat-context-bar">
+                    <Popover
+                      trigger="click"
+                      placement="topLeft"
+                      open={chatCategoryPickerOpen}
+                      onOpenChange={setChatCategoryPickerOpen}
+                      overlayClassName="chat-context-popover"
+                      content={
+                        <div className="chat-picker-panel">
+                          <div className="chat-picker-header">
+                            <div className="chat-picker-title">选择知识库</div>
+                            <div className="chat-picker-copy">限定对话只参考某个分类的知识沉淀。</div>
+                          </div>
+                          <div className="chat-picker-grid">
+                            <button
+                              type="button"
+                              className={cx('chat-picker-option', !selectedChatCategory && 'chat-picker-option-active')}
+                              onClick={() => {
+                                setSelectedChatCategory('');
+                                setChatCategoryPickerOpen(false);
+                              }}
+                            >
+                              全部知识库
+                            </button>
+                            {categories.map((category) => (
+                              <button
+                                key={category}
+                                type="button"
+                                className={cx(
+                                  'chat-picker-option',
+                                  selectedChatCategory === category && 'chat-picker-option-active',
+                                )}
+                                onClick={() => {
+                                  setSelectedChatCategory(category);
+                                  setChatCategoryPickerOpen(false);
+                                }}
+                              >
+                                {category}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      }
+                    >
+                      <button
+                        type="button"
+                        className={cx('chat-context-pill', selectedChatCategory && 'chat-context-pill-active')}
+                      >
+                        <BookOutlined />
+                        <span className="chat-context-pill-label">知识库</span>
+                        <span className="chat-context-pill-value">
+                          {selectedChatCategory || '全部'}
+                        </span>
+                        <DownOutlined className="chat-context-pill-arrow" />
+                      </button>
+                    </Popover>
+
+                    <Popover
+                      trigger="click"
+                      placement="topLeft"
+                      open={chatTagPickerOpen}
+                      onOpenChange={setChatTagPickerOpen}
+                      overlayClassName="chat-context-popover"
+                      content={
+                        <div className="chat-picker-panel">
+                          <div className="chat-picker-header">
+                            <div className="chat-picker-title">添加标签</div>
+                            <div className="chat-picker-copy">让助手优先参考与你当前主题更接近的知识卡片。</div>
+                          </div>
+                          <div className="chat-picker-tag-cloud">
+                            {chatTagOptions.length > 0 ? (
+                              chatTagOptions.map((tag) => {
+                                const active = selectedChatTags.includes(tag);
+                                return (
+                                  <button
+                                    key={tag}
+                                    type="button"
+                                    className={cx('chat-picker-tag', active && 'chat-picker-tag-active')}
+                                    onClick={() => {
+                                      setSelectedChatTags((prev) =>
+                                        active ? prev.filter((item) => item !== tag) : [...prev, tag],
+                                      );
+                                    }}
+                                  >
+                                    {tag}
+                                  </button>
+                                );
+                              })
+                            ) : (
+                              <div className="muted-text">当前分类还没有可用标签</div>
+                            )}
+                          </div>
+                          {selectedChatTags.length > 0 ? (
+                            <div className="chat-picker-footer">
+                              <Button size="small" type="text" onClick={() => setSelectedChatTags([])}>
+                                清空标签
+                              </Button>
+                            </div>
+                          ) : null}
+                        </div>
+                      }
+                    >
+                      <button
+                        type="button"
+                        className={cx('chat-context-pill', selectedChatTags.length > 0 && 'chat-context-pill-active')}
+                      >
+                        <TagsOutlined />
+                        <span className="chat-context-pill-label">标签</span>
+                        <span className="chat-context-pill-value">
+                          {selectedChatTags.length > 0
+                            ? selectedChatTags.length > 2
+                              ? `${selectedChatTagSummary} +${selectedChatTags.length - 2}`
+                              : selectedChatTagSummary
+                            : '未添加'}
+                        </span>
+                        <DownOutlined className="chat-context-pill-arrow" />
+                      </button>
+                    </Popover>
+                  </div>
+
+                  <div className="chat-input-row">
+                    <TextArea
+                      value={chatInput}
+                      onChange={(e) => setChatInput(e.target.value)}
+                      placeholder="输入你的问题，按 Enter 发送，Shift + Enter 换行"
+                      autoSize={{ minRows: 1, maxRows: 8 }}
+                      className="chat-composer-input"
+                      onPressEnter={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          handleSendMessage();
+                        }
+                      }}
+                    />
+                    <Button
+                      type="primary"
+                      shape="circle"
+                      icon={<SendOutlined />}
+                      onClick={handleSendMessage}
+                      loading={isLoading}
+                      disabled={isLoading || !chatInput.trim()}
+                      className="chat-send-button"
+                    />
+                  </div>
+                </div>
               </div>
             </div>
           ) : null}
+        </section>
+      </div>
+    </div>
+  );
+
+  const renderInterviewWorkspace = () => (
+    <div className="interview-workspace-overlay">
+      <div className="interview-workspace">
+        <aside className="interview-workspace-drawer">
+          <div className="chat-drawer-header">
+            <div>
+              <div className="chat-drawer-title">面试助手</div>
+              <div className="chat-drawer-copy">先分析项目，再进入结构化追问与模拟面试。</div>
+            </div>
+            <Space size={8}>
+              <Tooltip title="新建分析">
+                <Button type="text" icon={<PlusOutlined />} onClick={openInterviewAnalyzer} />
+              </Tooltip>
+              <Tooltip title="关闭">
+                <Button type="text" icon={<CloseOutlined />} onClick={closeInterview} />
+              </Tooltip>
+            </Space>
+          </div>
+
+          <div className="interview-drawer-section">
+            <div className="surface-emphasis">当前模式</div>
+            <div className="tag-row">
+              <StatusPill tone={interviewLoading ? 'info' : 'neutral'}>
+                {interviewMode === 'session' ? '追问中' : interviewLoading ? '分析中' : '待分析'}
+              </StatusPill>
+              <StatusPill tone="neutral">{interviewSessions.length} 个会话</StatusPill>
+            </div>
+          </div>
+
+          <div className="interview-drawer-section">
+            <div className="surface-emphasis">最近会话</div>
+            <div className="muted-text">可以随时切回历史项目继续追问。</div>
+          </div>
+
+          <div className="conversation-list interview-drawer-list">
+            {interviewSessions.length > 0 ? (
+              interviewSessions.map((session) => (
+                <button
+                  key={session.session_id}
+                  type="button"
+                  className={cx(
+                    'interview-session-card',
+                    currentInterviewSession?.session_id === session.session_id &&
+                      'interview-session-card-active',
+                  )}
+                  onClick={() => openInterviewSession(session)}
+                >
+                  <div className="interview-session-card-head">
+                    <strong>{session.analysis?.project_name || '未命名项目'}</strong>
+                    <StatusPill tone={session.status === 'completed' ? 'success' : 'info'}>
+                      {session.questions?.length || 0} 题
+                    </StatusPill>
+                  </div>
+                  <div className="muted-text">
+                    {session.analysis?.language || '未知语言'}
+                    {session.created_at
+                      ? ` · ${new Date(session.created_at).toLocaleString('zh-CN')}`
+                      : ''}
+                  </div>
+                </button>
+              ))
+            ) : (
+              <EmptyState
+                compact
+                icon={<ExperimentOutlined />}
+                title="还没有历史面试会话"
+                description="先分析一个项目，结果会自动出现在这里。"
+              />
+            )}
+          </div>
+        </aside>
+
+        <section className="chat-main-panel interview-main-panel">
+          <div className="chat-topbar">
+            <div className="chat-topbar-title">
+              <div className="chat-panel-title">
+                {interviewMode === 'session' ? '面试会话' : '代码分析'}
+              </div>
+              <div className="chat-panel-subtitle">
+                {interviewMode === 'session'
+                  ? '围绕项目摘要、问题列表和候选回答继续模拟面试。'
+                  : '输入仓库地址或上传压缩包，生成项目摘要与候选问题。'}
+              </div>
+            </div>
+
+            <div className="chat-toolbar">
+              <Button size="small" onClick={openInterviewAnalyzer}>
+                分析新代码
+              </Button>
+              <Button size="small" onClick={closeInterview}>
+                返回主界面
+              </Button>
+            </div>
+          </div>
+
+          <div className="interview-workspace-body">
+            {interviewMode === 'session' ? (
+              <InterviewSessionPanel
+                session={currentInterviewSession}
+                sessions={interviewSessions}
+                messages={interviewMessages}
+                input={interviewInput}
+                loading={interviewLoading}
+                onInputChange={setInterviewInput}
+                onOpenAnalyzer={openInterviewAnalyzer}
+                onOpenSession={openInterviewSession}
+                onSend={sendInterviewMessage}
+                onClose={closeInterview}
+                scrollRef={interviewMessagesEndRef}
+              />
+            ) : (
+              <InterviewAnalyzePanel
+                codeUrl={interviewCodeUrl}
+                onCodeUrlChange={setInterviewCodeUrl}
+                onFileChange={setInterviewCodeFile}
+                difficulty={interviewDifficulty}
+                onDifficultyChange={setInterviewDifficulty}
+                questionCount={interviewQuestionCount}
+                onQuestionCountChange={setInterviewQuestionCount}
+                loading={interviewLoading}
+                progress={interviewProgress}
+                progressMessage={interviewProgressMessage}
+                sessions={interviewSessions}
+                onOpenSession={openInterviewSession}
+                onAnalyze={analyzeInterviewCode}
+                onClose={closeInterview}
+              />
+            )}
+          </div>
         </section>
       </div>
     </div>
@@ -1954,6 +2098,17 @@ function App() {
           </Button>
           <Button
             size="large"
+            icon={<ExperimentOutlined />}
+            onClick={() => {
+              setShowChatSidebar(false);
+              openInterviewAnalyzer();
+            }}
+            className="secondary-action"
+          >
+            面试项目
+          </Button>
+          <Button
+            size="large"
             icon={<MessageOutlined />}
             onClick={() => setShowChatSidebar((value) => !value)}
             className="secondary-action"
@@ -1965,12 +2120,16 @@ function App() {
 
       <Layout className="main-layout">
         <Content className="main-content">
-          {status === 'idle' && renderIdleContent()}
-          {status === 'processing' && renderProcessingContent()}
-          {confirmStatus === 'confirming' && renderProcessingContent()}
-          {status === 'reviewing' && currentResult && renderReviewContent()}
-          {status === 'categories' && renderCategoryContent()}
-          {status === 'knowledgeBase' && renderKnowledgeContent()}
+          {!isInterviewWorkspaceOpen && (
+            <>
+              {status === 'idle' && renderIdleContent()}
+              {status === 'processing' && renderProcessingContent()}
+              {confirmStatus === 'confirming' && renderProcessingContent()}
+              {status === 'reviewing' && currentResult && renderReviewContent()}
+              {status === 'categories' && renderCategoryContent()}
+              {status === 'knowledgeBase' && renderKnowledgeContent()}
+            </>
+          )}
         </Content>
       </Layout>
 
@@ -1987,7 +2146,8 @@ function App() {
         </>
       ) : null}
 
-      {showChatSidebar ? renderChatSidebar() : null}
+      {showChatSidebar && !isInterviewWorkspaceOpen ? renderChatSidebar() : null}
+      {isInterviewWorkspaceOpen ? renderInterviewWorkspace() : null}
 
       <Modal
         title="添加新类别"

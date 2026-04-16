@@ -1,0 +1,46 @@
+# 面试项目功能配置
+
+# 最大代码大小限制（MB）
+max_code_size_mb: 100
+
+# 最多生成的面试问题数量
+max_question_count: 30
+
+# 沙箱基础路径
+sandbox_path: /tmp/interview_sandbox
+
+# 沙箱自动清理间隔（小时）
+cleanup_interval_hours: 24
+
+# Git 下载超时时间（秒）
+git_download_timeout: 300
+
+# 代码分析超时时间（秒）
+analysis_timeout: 600
+
+# 支持的编程语言
+supported_languages:
+  - Python
+  - JavaScript
+  - TypeScript
+  - Java
+  - Go
+  - Rust
+  - C++
+  - C
+  - C#
+  - PHP
+  - Ruby
+
+# 支持的代码托管平台
+supported_platforms:
+  - github
+  - gitlab
+
+# 支持的压缩包格式
+supported_archive_formats:
+  - .zip
+  - .tar
+  - .tar.gz
+  - .tgz
+  - .tar.bz2

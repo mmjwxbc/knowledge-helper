@@ -1,17 +1,37 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Body
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
 import uuid
 from datetime import datetime
-
+import json
 from .ingestion import process_content, refine_content_with_feedback, get_staging_data, clear_staging_data
 from .storage import get_vault_data, get_categories, get_all_tags, add_category, commit_item_with_category, commit_to_storage, init_default_categories, delete_vault_item_data, list_chat_conversations, get_chat_conversation, upsert_chat_conversation, delete_chat_conversation, upsert_memory_item, get_memory_item, list_memory_items, delete_memory_item, log_memory_access, mark_knowledge_item_reviewed
 from .agent import get_chat_response
 from .review import daily_review_cache
 from xhs_downloader.application.app import XHS
 from .deps import get_xhs_instance, get_llm_instance, get_qa_router_instance
+
+# 面试功能模块
+from .interview import (
+    create_interview_session,
+    get_interview_session,
+    update_interview_session,
+    delete_interview_session,
+    get_all_sessions,
+    build_interview_kickoff,
+    generate_interview_questions,
+    stream_answer_interview_question
+)
+from .code_downloader import download_code, get_code_structure, is_github_url, is_gitlab_url
+from .code_analyzer import analyze_codebase, quick_code_summary
+from .interview_sandbox import (
+    create_sandbox,
+    get_sandbox_info,
+    cleanup_sandbox,
+    async_cleanup_sandbox
+)
 # @asynccontextmanager
 # async def lifespan(_app: FastAPI):
 #     # Initialize default categories on startup
@@ -580,6 +600,221 @@ async def delete_chat_conversation_endpoint(conversation_id: str):
     """
     success = await delete_chat_conversation(conversation_id)
     return {"success": success}
+
+# ==================== 面试项目功能 ====================
+
+class InterviewAnalyzeInput(BaseModel):
+    """面试分析输入"""
+    code_url: Optional[str] = None  # GitHub/GitLab URL
+    difficulty: str = "medium"  # easy/medium/hard
+    question_count: int = 10
+    category: Optional[str] = None  # 知识库分类
+    tags: Optional[List[str]] = None  # 知识库标签
+
+class InterviewAskInput(BaseModel):
+    """面试提问输入"""
+    question: str
+    category: Optional[str] = None
+    tags: Optional[List[str]] = None
+
+@app.post("/api/interview/analyze")
+async def analyze_interview_code(
+    code_url: Optional[str] = Form(None),
+    difficulty: str = Form("medium"),
+    question_count: int = Form(10),
+    file: Optional[UploadFile] = File(None),
+):
+    """
+    分析代码并生成面试问题（SSE 流式响应）
+    """
+    from fastapi.responses import StreamingResponse
+    import asyncio
+
+    if not code_url and not file:
+        raise HTTPException(status_code=400, detail="需要提供代码 URL 或上传压缩包")
+
+    # 验证输入
+    if code_url:
+        if not (is_github_url(code_url) or is_gitlab_url(code_url)):
+            raise HTTPException(status_code=400, detail="仅支持 GitHub 或 GitLab URL")
+        if file:
+            raise HTTPException(status_code=400, detail="URL 和文件不能同时提供")
+
+    # 生成会话 ID
+    session_id = str(uuid.uuid4())
+    task_id = session_id
+
+    # 创建沙箱
+    sandbox_id = create_sandbox()
+
+    # 创建任务和会话
+    task = {
+        "id": task_id,
+        "code_url": code_url,
+        "difficulty": difficulty,
+        "question_count": question_count,
+        "status": "processing",
+        "progress": 0,
+        "message": "开始分析代码",
+        "created": datetime.now().isoformat(),
+        "updated": datetime.now().isoformat()
+    }
+    task_queue[task_id] = task
+
+    create_interview_session(session_id, code_url)
+
+    progress_queue = asyncio.Queue()
+
+    async def process_with_progress():
+        """处理代码分析并生成面试问题"""
+        def progress_callback(progress, message):
+            task["progress"] = progress
+            task["message"] = message
+            task["updated"] = datetime.now().isoformat()
+            asyncio.create_task(progress_queue.put((progress, message)))
+
+        try:
+            # 1. 下载代码
+            progress_callback(10, "下载代码到沙箱")
+            success, message = await download_code(
+                sandbox_id,
+                url=code_url,
+                file=file
+            )
+
+            if not success:
+                raise Exception(message)
+
+            # 2. 分析代码
+            progress_callback(20, "分析代码结构")
+            analysis = await analyze_codebase(sandbox_id, progress_callback)
+
+            # 3. 生成面试问题
+            progress_callback(80, "生成面试问题")
+            questions = await generate_interview_questions(
+                analysis,
+                difficulty=difficulty,
+                count=question_count,
+                progress_callback=progress_callback
+            )
+
+            # 4. 更新会话
+            update_interview_session(session_id, analysis, questions)
+            session = get_interview_session(session_id)
+            if session is not None:
+                await build_interview_kickoff(session)
+
+            # 5. 清理沙箱
+            progress_callback(95, "清理临时文件")
+            await async_cleanup_sandbox(sandbox_id)
+
+            # 6. 完成
+            task["status"] = "completed"
+            task["progress"] = 100
+            task["message"] = "分析完成"
+            task["updated"] = datetime.now().isoformat()
+
+            session = get_interview_session(session_id)
+            result = session.to_dict() if session is not None else {
+                "session_id": session_id,
+                "analysis": analysis.to_dict(),
+                "questions": [q.model_dump() for q in questions]
+            }
+            await progress_queue.put((100, "分析完成", result))
+
+        except Exception as e:
+            # 错误处理
+            task["status"] = "failed"
+            task["progress"] = 100
+            task["message"] = f"分析失败: {str(e)}"
+            task["error"] = str(e)
+            task["updated"] = datetime.now().isoformat()
+
+            await progress_queue.put((100, f"分析失败: {str(e)}", {"error": str(e)}))
+
+    # 启动后台处理
+    asyncio.create_task(process_with_progress())
+
+    async def event_generator():
+        """生成 SSE 事件"""
+        yield f"data: {json.dumps({'status': 'processing', 'progress': 0, 'message': '开始分析代码'})}\n\n"
+
+        while True:
+            try:
+                item = await asyncio.wait_for(progress_queue.get(), timeout=600.0)
+
+                if len(item) == 3:
+                    # 最终结果
+                    progress, message, result = item
+                    yield f"data: {json.dumps({'status': 'completed', 'result': result})}\n\n"
+                    break
+                else:
+                    # 进度更新
+                    progress, message = item
+                    yield f"data: {json.dumps({'status': 'processing', 'progress': progress, 'message': message})}\n\n"
+
+            except asyncio.TimeoutError:
+                task["status"] = "failed"
+                task["message"] = "分析超时"
+                task["error"] = "分析超时"
+                task["updated"] = datetime.now().isoformat()
+
+                yield f"data: {json.dumps({'status': 'error', 'message': '分析超时'})}\n\n"
+                break
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@app.get("/api/interview/session/{session_id}")
+async def get_interview_session_endpoint(session_id: str):
+    """
+    获取面试会话详情
+    """
+    session = get_interview_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="面试会话不存在")
+
+    return session.to_dict()
+
+
+@app.get("/api/interview/sessions")
+async def get_all_interview_sessions():
+    """
+    获取所有面试会话
+    """
+    return {"sessions": get_all_sessions()}
+
+
+@app.delete("/api/interview/session/{session_id}")
+async def delete_interview_session_endpoint(session_id: str):
+    """
+    删除面试会话
+    """
+    success = delete_interview_session(session_id)
+    return {"success": success}
+
+
+@app.post("/api/interview/ask")
+async def ask_interview_question_stream(session_id: str, input: InterviewAskInput):
+    """
+    向面试会话提问（SSE 流式响应）
+    """
+    from fastapi.responses import StreamingResponse
+
+    session = get_interview_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="面试会话不存在")
+
+    return StreamingResponse(
+        stream_answer_interview_question(
+            question=input.question,
+            session_id=session_id,
+            category=input.category,
+            tags=input.tags
+        ),
+        media_type="text/event-stream"
+    )
+
 
 if __name__ == "__main__":
     import uvicorn

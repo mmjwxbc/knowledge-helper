@@ -12,14 +12,17 @@ from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.messages import HumanMessage, SystemMessage
 import docx2txt
 from pypdf import PdfReader
-import aiohttp
 import re
 from bs4 import BeautifulSoup
-from biliSub.enhanced_bilisub import BiliSubDownloader
 from dotenv import load_dotenv
 from .utils import read_srt, list_dir
 from .deps import get_xhs_instance, get_qa_router_instance, get_ocr_client
 load_dotenv()
+
+try:
+    from biliSub.enhanced_bilisub import BiliSubDownloader
+except ModuleNotFoundError:
+    BiliSubDownloader = None
 
 # Models for PydanticOutputParser
 class QAItem(BaseModel):
@@ -28,14 +31,20 @@ class QAItem(BaseModel):
     tags: List[str] = Field(description="Relevant tags for the content")
 
 parser = PydanticOutputParser(pydantic_object=QAItem)
-bilibili_sub_downloader = BiliSubDownloader({
-        "output_formats": ["srt"],
-        "use_asr": True,
-        "asr_model": "small",
-        "concurrency": 2,
-        "temp_dir": "/tmp",
-        "output_dir": "/home/jhli/knowledge-helper/backend/bilisub_output"
-    })
+bilibili_sub_downloader = (
+    BiliSubDownloader(
+        {
+            "output_formats": ["srt"],
+            "use_asr": True,
+            "asr_model": "small",
+            "concurrency": 2,
+            "temp_dir": "/tmp",
+            "output_dir": "/home/jhli/knowledge-helper/backend/bilisub_output",
+        }
+    )
+    if BiliSubDownloader is not None
+    else None
+)
 
 
 # Global memory cache (replace with Redis in production)
@@ -60,6 +69,8 @@ async def extract_text_from_file(file: UploadFile) -> str:
         
 async def extract_text_from_url(url: str, extract_mode: str = "text_and_images") -> tuple[bool, str]:
     if "bilibili" in url:
+        if bilibili_sub_downloader is None:
+            return False, "Bilibili subtitle support is unavailable: missing optional dependency 'biliSub'."
         # print("正在解析视频URL...")
         tasks = bilibili_sub_downloader.parse_input(url)
         

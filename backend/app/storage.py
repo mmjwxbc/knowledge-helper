@@ -269,6 +269,95 @@ async def get_filtered_knowledge_items(category: Optional[str] = None, tags: Opt
     finally:
         db.close()
 
+
+async def search_similar_knowledge_items(
+    query: str,
+    category: Optional[str] = None,
+    tags: Optional[List[str]] = None,
+    limit: int = 5,
+):
+    """
+    Search similar approved knowledge items using the vector store, then hydrate them from SQL.
+    """
+    normalized_query = (query or "").strip()
+    if not normalized_query:
+        return []
+
+    where = {}
+    if category:
+        where["category"] = category
+
+    try:
+        embedded_query = embeddings.embed_query(normalized_query)
+        result = collection.query(
+            query_embeddings=[embedded_query],
+            n_results=max(int(limit), 1),
+            where=where or None,
+        )
+    except Exception as e:
+        print(f"Error querying vector store: {str(e)}")
+        return []
+
+    ids = result.get("ids", [[]])[0]
+    distances = result.get("distances", [[]])[0]
+    if not ids:
+        return []
+
+    db = SessionLocal()
+    try:
+        matched_items = (
+            db.query(KnowledgeItem)
+            .filter(
+                KnowledgeItem.status == "approved",
+                KnowledgeItem.id.in_([int(item_id) for item_id in ids if str(item_id).isdigit()]),
+            )
+            .all()
+        )
+        item_by_id = {str(item.id): item for item in matched_items}
+
+        normalized_tags = {
+            tag.strip().lower()
+            for tag in (tags or [])
+            if isinstance(tag, str) and tag.strip()
+        }
+
+        hydrated = []
+        for index, item_id in enumerate(ids):
+            item = item_by_id.get(str(item_id))
+            if item is None:
+                continue
+
+            parsed_tags = _safe_json_loads(item.tags, [])
+            if normalized_tags:
+              item_tags = {
+                  tag.strip().lower()
+                  for tag in parsed_tags
+                  if isinstance(tag, str) and tag.strip()
+              }
+              if not item_tags.intersection(normalized_tags):
+                  continue
+
+            distance = distances[index] if index < len(distances) else None
+            similarity = None
+            if isinstance(distance, (int, float)):
+                similarity = max(0.0, 1.0 - float(distance))
+
+            hydrated.append(
+                {
+                    "id": item.id,
+                    "question": item.question,
+                    "answer": item.answer,
+                    "tags": parsed_tags,
+                    "category": item.category,
+                    "created_at": item.created_at.isoformat() if item.created_at else None,
+                    "similarity": similarity,
+                }
+            )
+
+        return hydrated[:limit]
+    finally:
+        db.close()
+
 async def get_categories():
     """
     Get all knowledge categories.
